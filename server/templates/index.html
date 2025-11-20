@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Chat Server</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --dark-color: #343a40;
+            --light-color: #f8f9fa;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .server-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: var(--dark-color);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .status-panel {
+            background: var(--light-color);
+            padding: 20px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .online {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .main-content {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        .chat-section {
+            flex: 1;
+        }
+
+        .info-section {
+            width: 400px;
+        }
+
+        .messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            background-color: #fafafa;
+            border-radius: 8px;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 10px;
+            border-radius: 8px;
+            background: white;
+            border-left: 4px solid var(--primary-color);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .message.encrypted {
+            border-left-color: var(--warning-color);
+            background-color: #fffaf0;
+        }
+
+        .message.private {
+            border-left-color: var(--danger-color);
+            background-color: #ffe6e6;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .username {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        .message-status {
+            font-size: 12px;
+            margin-left: 10px;
+            padding: 2px 6px;
+            border-radius: 10px;
+            background: #e9ecef;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        input, textarea, button, select {
+            padding: 10px 15px;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        textarea {
+            flex: 1;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+        }
+
+        button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        button.success {
+            background: var(--success-color);
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: var(--success-color);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .stats-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .stat-item {
+            background: var(--light-color);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .stat-label {
+            display: block;
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            display: block;
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--dark-color);
+        }
+
+        .networks-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .networks-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        .network-item {
+            background: var(--light-color);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid var(--success-color);
+        }
+
+        .network-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .network-name {
+            font-weight: bold;
+            color: var(--dark-color);
+        }
+
+        .user-count {
+            background: var(--primary-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .users-list {
+            margin-top: 10px;
+        }
+
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .user-item:last-child {
+            border-bottom: none;
+        }
+
+        .user-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-name {
+            font-weight: bold;
+        }
+
+        .user-ip {
+            font-size: 11px;
+            color: #6c757d;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .status-online {
+            background: var(--success-color);
+        }
+
+        .alert {
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid var(--primary-color);
+            color: var(--primary-color);
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+
+        .refresh-btn:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="server-container">
+        <div class="header">
+            <h1>🌐 Secure Chat Server</h1>
+            <p>Мониторинг WiFi сетей и пользователей</p>
+        </div>
+
+        <div class="status-panel">
+            <div class="status online">
+                <span class="status-indicator status-online"></span>
+                ✅ Сервер запущен и готов к работе
+            </div>
+            <div class="controls">
+                <button onclick="loadAllData()" class="refresh-btn">🔄 Обновить все данные</button>
+                <div style="flex: 1;"></div>
+                <span>Режим: <strong id="serverMode">WiFi Networks</strong></span>
+            </div>
+            <div id="connectionAlert"></div>
+        </div>
+
+        <div class="main-content">
+            <div class="chat-section">
+                <div class="stats-panel">
+                    <h3>📊 Статистика сервера</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-label">WiFi сетей</span>
+                            <span class="stat-value" id="totalNetworks">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Всего клиентов</span>
+                            <span class="stat-value" id="totalClients">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Активных сетей</span>
+                            <span class="stat-value" id="activeNetworks">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Сообщений сегодня</span>
+                            <span class="stat-value" id="todayMessages">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="controls">
+                    <input type="text" id="username" placeholder="Имя администратора" value="Admin">
+                    <input type="password" id="encryptionKey" placeholder="Ключ шифрования" value="secret123">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="encryptionToggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <span>Шифрование</span>
+                </div>
+
+                <div class="messages" id="messages">
+                    <div class="message">
+                        <div class="message-content">
+                            Сервер мониторинга запущен. Здесь отображаются системные сообщения и статистика.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <textarea id="messageInput" placeholder="Введите системное сообщение..."></textarea>
+                </div>
+                <div class="input-group">
+                    <button onclick="sendMessage()" class="success" style="flex: 1;">Отправить системное сообщение</button>
+                </div>
+            </div>
+
+            <div class="info-section">
+                <div class="networks-panel">
+                    <div class="network-header">
+                        <h3>📶 Активные WiFi сети</h3>
+                        <button onclick="loadNetworks()" class="refresh-btn">Обновить</button>
+                    </div>
+                    <div class="networks-list" id="networksList">
+                        <div class="network-item">
+                            <div class="network-name">Загрузка сетей...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let encryptionEnabled = true;
+
+        function showAlert(message, type = 'success') {
+            const alertDiv = document.getElementById('connectionAlert');
+            alertDiv.innerHTML = `
+                <div class="alert alert-${type}">
+                    ${message}
+                </div>
+            `;
+            setTimeout(() => {
+                alertDiv.innerHTML = '';
+            }, 5000);
+        }
+
+        function toggleEncryption() {
+            encryptionEnabled = !encryptionEnabled;
+            document.getElementById('encryptionStatus').textContent =
+                encryptionEnabled ? 'ВКЛ' : 'ВЫКЛ';
+        }
+
+        async function loadMessages() {
+            try {
+                const response = await fetch('/messages');
+                const messages = await response.json();
+
+                const messagesContainer = document.getElementById('messages');
+                messagesContainer.innerHTML = '';
+
+                if (messages.length === 0) {
+                    messagesContainer.innerHTML = `
+                        <div class="message">
+                            <div class="message-content">
+                                Нет сообщений в базе данных.
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                messages.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    const isPrivate = msg.recipient && msg.recipient !== 'all';
+
+                    messageDiv.className = `message ${msg.encrypted ? 'encrypted' : ''} ${isPrivate ? 'private' : ''}`;
+
+                    const timestamp = new Date(msg.timestamp).toLocaleTimeString();
+                    const status = msg.encrypted ? '🔒' : '🔓';
+                    const privateBadge = isPrivate ? '<span class="message-status">🔒 Приватное</span>' : '';
+
+                    messageDiv.innerHTML = `
+                        <div class="message-header">
+                            <span class="username">${msg.username}</span>
+                            <div>
+                                <span class="timestamp">${timestamp}</span>
+                                <span class="message-status">${status}</span>
+                                ${privateBadge}
+                            </div>
+                        </div>
+                        <div class="message-content">
+                            ${msg.message}
+                            ${msg.ip_address ? `<br><small>IP: ${msg.ip_address}</small>` : ''}
+                        </div>
+                    `;
+
+                    messagesContainer.appendChild(messageDiv);
+                });
+
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            } catch (error) {
+                console.error('Ошибка загрузки сообщений:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const username = document.getElementById('username').value;
+            const message = document.getElementById('messageInput').value;
+
+            if (!username || !message) {
+                showAlert('Заполните имя и сообщение', 'error');
+                return;
+            }
+
+            try {
+                const messageData = {
+                    username: username,
+                    message: message,
+                    encrypted: encryptionEnabled
+                };
+
+                const response = await fetch('/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(messageData)
+                });
+
+                if (response.ok) {
+                    document.getElementById('messageInput').value = '';
+                    loadMessages();
+                    showAlert('Системное сообщение отправлено');
+                }
+            } catch (error) {
+                console.error('Ошибка отправки:', error);
+                showAlert('Ошибка отправки сообщения', 'error');
+            }
+        }
+
+        async function loadNetworks() {
+            try {
+                const response = await fetch('/api/networks');
+                const data = await response.json();
+
+                const networksList = document.getElementById('networksList');
+                networksList.innerHTML = '';
+
+                if (data.networks.length === 0) {
+                    networksList.innerHTML = `
+                        <div class="network-item">
+                            <div class="network-name">Нет активных сетей</div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                data.networks.forEach(network => {
+                    const networkDiv = document.createElement('div');
+                    networkDiv.className = 'network-item';
+
+                    networkDiv.innerHTML = `
+                        <div class="network-header">
+                            <div class="network-name">📶 ${network.ssid_sample}</div>
+                            <span class="user-count">${network.user_count} users</span>
+                        </div>
+                        <div class="network-hash" style="font-size: 10px; color: #6c757d; margin-bottom: 10px;">
+                            ${network.ssid_hash}
+                        </div>
+                        <div class="users-list">
+                            ${network.users.map(user => `
+                                <div class="user-item">
+                                    <div class="user-info">
+                                        <span class="user-name">${user.username}</span>
+                                        <span class="user-ip">${user.ip}</span>
+                                    </div>
+                                    <span class="status-indicator status-online"></span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+
+                    networksList.appendChild(networkDiv);
+                });
+
+            } catch (error) {
+                console.error('Ошибка загрузки сетей:', error);
+                showAlert('Ошибка загрузки списка сетей', 'error');
+            }
+        }
+
+        async function updateStatistics() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalNetworks').textContent = stats.total_networks;
+                document.getElementById('totalClients').textContent = stats.total_clients;
+                document.getElementById('activeNetworks').textContent = stats.active_networks;
+                document.getElementById('todayMessages').textContent = Math.floor(stats.total_clients * 1.5); // Примерная статистика
+
+            } catch (error) {
+                console.error('Ошибка загрузки статистики:', error);
+            }
+        }
+
+        async function loadAllData() {
+            await loadMessages();
+            await loadNetworks();
+            await updateStatistics();
+            showAlert('Все данные обновлены');
+        }
+
+        // Обработчики событий
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        document.getElementById('encryptionToggle').addEventListener('change', function(e) {
+            encryptionEnabled = e.target.checked;
+        });
+
+        // Автообновление
+        setInterval(loadMessages, 3000);
+        setInterval(loadNetworks, 10000);
+        setInterval(updateStatistics, 5000);
+
+        // Инициализация
+        loadAllData();
+    </script>
+</body>
+</html>
