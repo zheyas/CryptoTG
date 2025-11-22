@@ -3,15 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Chat Client</title>
+    <title>Secure Local Chat</title>
     <style>
         :root {
             --primary-color: #007bff;
+            --primary-dark: #0056b3;
             --success-color: #28a745;
+            --success-dark: #1e7e34;
             --danger-color: #dc3545;
+            --danger-dark: #c82333;
             --warning-color: #ffc107;
+            --warning-dark: #e0a800;
             --dark-color: #343a40;
             --light-color: #f8f9fa;
+            --gray-color: #6c757d;
+            --border-color: #dee2e6;
+            --shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
 
         body {
@@ -20,6 +33,7 @@
             padding: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
+            line-height: 1.6;
         }
 
         .chat-container {
@@ -29,6 +43,9 @@
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 40px);
         }
 
         .header {
@@ -36,12 +53,23 @@
             color: white;
             padding: 20px;
             text-align: center;
+            position: relative;
+        }
+
+        .header h1 {
+            margin-bottom: 5px;
+            font-size: 24px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
         }
 
         .connection-panel {
             background: var(--light-color);
-            padding: 20px;
-            border-bottom: 1px solid #dee2e6;
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border-color);
         }
 
         .input-group {
@@ -49,22 +77,33 @@
             gap: 10px;
             margin-bottom: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         .input-group label {
-            min-width: 120px;
-            font-weight: bold;
+            min-width: 80px;
+            font-weight: 600;
+            font-size: 14px;
         }
 
         input, select, button, textarea {
             padding: 10px 15px;
-            border: 1px solid #ced4da;
+            border: 1px solid var(--border-color);
             border-radius: 8px;
             font-size: 14px;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
         }
 
         input, select, textarea {
             flex: 1;
+            min-width: 120px;
         }
 
         button {
@@ -74,19 +113,36 @@
             cursor: pointer;
             transition: all 0.3s ease;
             white-space: nowrap;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
         }
 
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow);
+        }
+
+        button:active {
+            transform: translateY(0);
         }
 
         button.success {
             background: var(--success-color);
         }
 
+        button.success:hover {
+            background: var(--success-dark);
+        }
+
         button.danger {
             background: var(--danger-color);
+        }
+
+        button.danger:hover {
+            background: var(--danger-dark);
         }
 
         button.warning {
@@ -94,50 +150,76 @@
             color: var(--dark-color);
         }
 
+        button.warning:hover {
+            background: var(--warning-dark);
+        }
+
         button:disabled {
-            background: #6c757d;
+            background: var(--gray-color);
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
+            opacity: 0.6;
         }
 
         .status-indicator {
             display: inline-block;
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             margin-right: 8px;
         }
 
         .status-connected {
             background: var(--success-color);
+            box-shadow: 0 0 5px var(--success-color);
         }
 
         .status-disconnected {
             background: var(--danger-color);
         }
 
+        .status-connecting {
+            background: var(--warning-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
         .chat-area {
             display: flex;
-            height: 600px;
+            flex: 1;
+            min-height: 0;
         }
 
         .messages {
             flex: 1;
             padding: 20px;
             overflow-y: auto;
-            border-right: 1px solid #dee2e6;
+            border-right: 1px solid var(--border-color);
             background: #fafafa;
+            display: flex;
+            flex-direction: column;
         }
 
         .message {
             margin-bottom: 15px;
-            padding: 12px;
+            padding: 12px 15px;
             border-radius: 10px;
             background: white;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
             border-left: 4px solid var(--primary-color);
             position: relative;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .message.encrypted {
@@ -156,11 +238,19 @@
             border: 1px solid #ffcccc;
         }
 
+        .message.system {
+            border-left-color: var(--gray-color);
+            background: #f0f0f0;
+            text-align: center;
+            font-style: italic;
+        }
+
         .message-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 5px;
+            font-size: 13px;
         }
 
         .username {
@@ -173,12 +263,12 @@
         }
 
         .timestamp {
-            font-size: 12px;
-            color: #6c757d;
+            font-size: 11px;
+            color: var(--gray-color);
         }
 
         .status {
-            font-size: 12px;
+            font-size: 11px;
             margin-left: 10px;
             padding: 2px 6px;
             border-radius: 10px;
@@ -187,6 +277,7 @@
 
         .message-content {
             word-wrap: break-word;
+            line-height: 1.4;
         }
 
         .private-badge {
@@ -202,9 +293,9 @@
         }
 
         .input-area {
-            padding: 20px;
+            padding: 15px 20px;
             background: white;
-            border-top: 1px solid #dee2e6;
+            border-top: 1px solid var(--border-color);
         }
 
         .message-input {
@@ -217,6 +308,7 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         #messageText {
@@ -224,6 +316,7 @@
             resize: vertical;
             min-height: 60px;
             font-family: inherit;
+            line-height: 1.4;
         }
 
         .message-type-indicator {
@@ -247,9 +340,10 @@
             width: 350px;
             padding: 20px;
             background: #f8f9fa;
-            border-left: 1px solid #dee2e6;
+            border-left: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
+            overflow-y: auto;
         }
 
         .settings-group {
@@ -261,6 +355,10 @@
             color: var(--dark-color);
             border-bottom: 2px solid var(--primary-color);
             padding-bottom: 5px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .toggle-switch {
@@ -312,6 +410,7 @@
             padding: 10px 15px;
             border-radius: 8px;
             margin-bottom: 15px;
+            font-size: 14px;
         }
 
         .alert-success {
@@ -328,10 +427,17 @@
 
         .stats p {
             margin: 5px 0;
-            padding: 5px;
+            padding: 8px;
             background: white;
             border-radius: 5px;
             border-left: 3px solid var(--primary-color);
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .stats span {
+            font-weight: 600;
         }
 
         .network-info {
@@ -340,6 +446,7 @@
             padding: 15px;
             margin-bottom: 15px;
             border-left: 4px solid var(--success-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
 
         .network-name {
@@ -347,12 +454,22 @@
             font-size: 16px;
             color: var(--dark-color);
             margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .network-ip {
+            font-size: 14px;
+            color: var(--primary-color);
+            margin-bottom: 5px;
         }
 
         .network-hash {
             font-size: 12px;
-            color: #6c757d;
+            color: var(--gray-color);
             font-family: monospace;
+            word-break: break-all;
         }
 
         .users-list {
@@ -362,6 +479,7 @@
             border-radius: 8px;
             background: white;
             margin: 10px 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
 
         .user-item {
@@ -370,6 +488,11 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: background 0.2s;
+        }
+
+        .user-item:hover {
+            background: #f5f5f5;
         }
 
         .user-item:last-child {
@@ -378,14 +501,15 @@
 
         .user-name {
             font-weight: bold;
+            font-size: 14px;
         }
 
         .user-ip {
             font-size: 11px;
-            color: #6c757d;
+            color: var(--gray-color);
         }
 
-        .wifi-icon {
+        .network-icon {
             margin-right: 8px;
         }
 
@@ -401,13 +525,98 @@
             background: var(--primary-color);
             color: white;
         }
+
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: var(--gray-color);
+            font-style: italic;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .chat-area {
+                flex-direction: column;
+            }
+
+            .settings-panel {
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid var(--border-color);
+                order: -1;
+            }
+
+            .input-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .input-group label {
+                min-width: auto;
+                margin-bottom: 5px;
+            }
+
+            .recipient-selector {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .header h1 {
+                font-size: 20px;
+            }
+
+            .header p {
+                font-size: 13px;
+            }
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .typing-indicator {
+            font-style: italic;
+            color: var(--gray-color);
+            font-size: 13px;
+            padding: 5px 15px;
+            animation: pulse 2s infinite;
+        }
+
+        .connection-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            margin-left: auto;
+            font-weight: 600;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
     <div class="chat-container">
         <div class="header">
-            <h1>🔒 Secure WiFi Chat</h1>
-            <p>Безопасное общение в вашей WiFi сети</p>
+            <h1>🔒 Secure Local Chat</h1>
+            <p>Безопасное общение в вашей локальной сети</p>
         </div>
 
         <div class="connection-panel">
@@ -416,17 +625,20 @@
                 <input type="text" id="serverHost" value="localhost" placeholder="Адрес сервера">
 
                 <label for="username">Имя:</label>
-                <input type="text" id="username" value="WebUser" placeholder="Ваше имя">
+                <input type="text" id="username" value="WebUser" placeholder="Ваше имя" maxlength="20">
             </div>
 
             <div class="input-group">
-                <button id="connectBtn" class="success">Подключиться к WiFi чату</button>
-                <button id="disconnectBtn" class="danger" disabled>Отключиться</button>
-                <div style="flex: 1;"></div>
-                <span id="connectionStatus">
-                    <span class="status-indicator status-disconnected"></span>
-                    Не подключено
-                </span>
+                <div class="connection-controls">
+                    <button id="connectBtn" class="success">📡 Подключиться</button>
+                    <button id="disconnectBtn" class="danger" disabled>❌ Отключиться</button>
+                </div>
+                <div class="connection-status">
+                    <span id="connectionStatus">
+                        <span class="status-indicator status-disconnected"></span>
+                        Не подключено
+                    </span>
+                </div>
             </div>
 
             <div id="connectionAlert"></div>
@@ -434,36 +646,18 @@
 
         <div class="chat-area">
             <div class="messages" id="messagesContainer">
-                <div class="message">
+                <div class="message system">
                     <div class="message-content">
-                        Добро пожаловать в Secure WiFi Chat! Подключитесь к серверу чтобы начать общение с пользователями в вашей WiFi сети.
+                        Добро пожаловать в Secure Local Chat! Подключитесь к серверу чтобы начать общение с пользователями в вашей локальной сети.
                     </div>
                 </div>
             </div>
 
             <div class="settings-panel">
                 <div class="settings-group">
-                    <h4>📶 Информация о сети</h4>
-                    <div class="network-info" id="networkInfo">
-                        <div class="network-name">
-                            <span class="wifi-icon">📶</span>
-                            <span id="wifiName">Не определено</span>
-                        </div>
-                        <div class="network-hash" id="wifiHash">-</div>
-                        <div class="input-group">
-                            <button id="refreshNetworkBtn" class="refresh-btn">Обновить</button>
-                            <span style="flex: 1;"></span>
-                            <small>Пользователей: <span id="usersCount">0</span></small>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="settings-group">
                     <h4>👥 Пользователи в сети</h4>
                     <div class="users-list" id="usersList">
-                        <div class="user-item">
-                            <span>Подключитесь к чату</span>
-                        </div>
+                        <div class="empty-state">Подключитесь к чату</div>
                     </div>
                 </div>
 
@@ -483,18 +677,35 @@
                         <input type="password" id="encryptionKey" value="secret123" placeholder="Ключ шифрования">
                     </div>
 
-                    <button id="updateSettingsBtn" class="warning">Обновить настройки</button>
+                    <button id="updateSettingsBtn" class="warning">🔄 Обновить настройки</button>
                 </div>
 
                 <div class="settings-group">
                     <h4>📊 Статистика</h4>
                     <div class="stats" id="stats">
                         <p>Сообщений: <span id="messageCount">0</span></p>
-                        <p>WiFi сеть: <span id="wifiStatus">Не подключено</span></p>
+                        <p>Локальный IP: <span id="networkStatus">Не подключено</span></p>
                         <p>Пользователей онлайн: <span id="onlineUsers">0</span></p>
                         <p>Шифрование: <span id="encryptionStatus">ВКЛ</span></p>
                     </div>
                 </div>
+                <div class="settings-group">
+                    <h4>🌐 Информация о сети</h4>
+                    <div class="network-info" id="networkInfo">
+                        <div class="network-name">
+                            <span class="network-icon">🌐</span>
+                            <span id="subnetName">Не определено</span>
+                        </div>
+                        <div class="network-ip" id="localIp">IP: загрузка...</div>
+                        <div class="network-hash" id="subnetHash">-</div>
+                        <div class="input-group">
+                            <button id="refreshNetworkBtn" class="refresh-btn">🔄 Обновить</button>
+                            <span style="flex: 1;"></span>
+                            <small>Пользователей: <span id="usersCount">0</span></small>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
 
@@ -507,8 +718,11 @@
                     </select>
                     <span id="messageType" class="message-type-indicator public-message">📢 Всем</span>
                 </div>
-                <textarea id="messageText" placeholder="Введите ваше сообщение..."></textarea>
-                <button id="sendBtn" class="success" disabled>Отправить сообщение</button>
+                <textarea id="messageText" placeholder="Введите ваше сообщение..." maxlength="1000"></textarea>
+                <div class="input-group">
+                    <small style="flex: 1;">Макс. 1000 символов</small>
+                    <button id="sendBtn" class="success" disabled>📤 Отправить</button>
+                </div>
             </div>
         </div>
     </div>
@@ -516,6 +730,8 @@
     <script>
         let autoRefresh = true;
         let currentUsername = '';
+        let isConnecting = false;
+        let messageCount = 0;
 
         // Элементы интерфейса
         const connectBtn = document.getElementById('connectBtn');
@@ -529,22 +745,34 @@
         const refreshNetworkBtn = document.getElementById('refreshNetworkBtn');
         const recipientSelect = document.getElementById('recipientSelect');
         const messageType = document.getElementById('messageType');
+        const messageText = document.getElementById('messageText');
 
         // Функции обновления интерфейса
-        function updateConnectionStatus(connected) {
+        function updateConnectionStatus(status) {
             const indicator = connectionStatus.querySelector('.status-indicator');
-            if (connected) {
-                indicator.className = 'status-indicator status-connected';
-                connectionStatus.innerHTML = '<span class="status-indicator status-connected"></span>Подключено к WiFi чату';
+            indicator.className = 'status-indicator';
+
+            if (status === 'connected') {
+                indicator.classList.add('status-connected');
+                connectionStatus.innerHTML = '<span class="status-indicator status-connected"></span>Подключено к локальному чату';
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
                 sendBtn.disabled = false;
+                isConnecting = false;
+            } else if (status === 'connecting') {
+                indicator.classList.add('status-connecting');
+                connectionStatus.innerHTML = '<span class="status-indicator status-connecting"></span>Подключение...';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = true;
+                sendBtn.disabled = true;
+                isConnecting = true;
             } else {
-                indicator.className = 'status-indicator status-disconnected';
+                indicator.classList.add('status-disconnected');
                 connectionStatus.innerHTML = '<span class="status-indicator status-disconnected"></span>Не подключено';
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
+                isConnecting = false;
             }
         }
 
@@ -563,21 +791,31 @@
             const messageDiv = document.createElement('div');
             const isYou = messageData.username === currentUsername;
             const isPrivate = messageData.is_private;
+            const isSystem = messageData.is_system;
 
-            messageDiv.className = `message ${messageData.encrypted ? 'encrypted' : ''} ${isYou ? 'sent' : ''} ${isPrivate ? 'private' : ''}`;
+            let messageClass = 'message';
+            if (isSystem) messageClass += ' system';
+            if (messageData.encrypted) messageClass += ' encrypted';
+            if (isYou) messageClass += ' sent';
+            if (isPrivate) messageClass += ' private';
+
+            messageDiv.className = messageClass;
 
             let privateBadge = '';
-            if (isPrivate) {
+            if (isPrivate && !isSystem) {
                 privateBadge = '<div class="private-badge">🔒 Приватное</div>';
             }
+
+            let usernameDisplay = isSystem ? 'Система' : messageData.username;
+            let youIndicator = isYou && !isSystem ? ' (Вы)' : '';
 
             messageDiv.innerHTML = `
                 ${privateBadge}
                 <div class="message-header">
-                    <span class="username ${isYou ? 'you' : ''}">${messageData.username} ${isYou ? '(Вы)' : ''}</span>
+                    <span class="username ${isYou && !isSystem ? 'you' : ''}">${usernameDisplay}${youIndicator}</span>
                     <div>
-                        <span class="timestamp">${messageData.timestamp}</span>
-                        <span class="status">${messageData.status || ''}</span>
+                        <span class="timestamp">${messageData.timestamp || new Date().toLocaleTimeString()}</span>
+                        ${messageData.status ? `<span class="status">${messageData.status}</span>` : ''}
                     </div>
                 </div>
                 <div class="message-content">
@@ -587,38 +825,45 @@
 
             messagesContainer.appendChild(messageDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            // Обновляем счетчик сообщений
+            if (!isSystem) {
+                messageCount++;
+                document.getElementById('messageCount').textContent = messageCount;
+            }
         }
 
         function updateNetworkInfo(networkInfo) {
-            document.getElementById('wifiName').textContent = networkInfo.current_ssid || 'Не определено';
-            document.getElementById('wifiHash').textContent = networkInfo.ssid_hash || '-';
+            document.getElementById('subnetName').textContent = networkInfo.subnet || 'Не определено';
+            document.getElementById('localIp').textContent = `IP: ${networkInfo.local_ip || 'загрузка...'}`;
+            document.getElementById('subnetHash').textContent = networkInfo.subnet_hash || '-';
             document.getElementById('usersCount').textContent = networkInfo.total_users || 0;
             document.getElementById('onlineUsers').textContent = networkInfo.total_users || 0;
 
-            if (networkInfo.current_ssid && networkInfo.current_ssid !== 'unknown_wifi_network') {
-                document.getElementById('wifiStatus').textContent = networkInfo.current_ssid;
-                document.getElementById('wifiStatus').style.color = 'var(--success-color)';
+            if (networkInfo.local_ip) {
+                document.getElementById('networkStatus').textContent = networkInfo.local_ip;
+                document.getElementById('networkStatus').style.color = 'var(--success-color)';
             } else {
-                document.getElementById('wifiStatus').textContent = 'Не определено';
-                document.getElementById('wifiStatus').style.color = 'var(--danger-color)';
+                document.getElementById('networkStatus').textContent = 'Не определено';
+                document.getElementById('networkStatus').style.color = 'var(--danger-color)';
             }
         }
 
         function updateUsersList(users) {
             const usersList = document.getElementById('usersList');
-            usersList.innerHTML = '';
 
             if (!users || users.length === 0) {
-                usersList.innerHTML = '<div class="user-item">Нет пользователей в сети</div>';
+                usersList.innerHTML = '<div class="empty-state">Нет пользователей в сети</div>';
                 return;
             }
 
+            usersList.innerHTML = '';
             users.forEach(user => {
                 const userDiv = document.createElement('div');
                 userDiv.className = 'user-item';
                 userDiv.innerHTML = `
                     <div>
-                        <div class="user-name">${user.username}</div>
+                        <div class="user-name">${user.username} ${user.username === currentUsername ? '(Вы)' : ''}</div>
                         <div class="user-ip">${user.ip_address}</div>
                     </div>
                     <span class="status-indicator status-connected"></span>
@@ -667,14 +912,20 @@
         // API функции
         async function connectToServer() {
             const serverHost = document.getElementById('serverHost').value;
-            const username = document.getElementById('username').value;
+            const username = document.getElementById('username').value.trim();
 
             if (!serverHost || !username) {
                 showAlert('Заполните все поля для подключения', 'error');
                 return;
             }
 
+            if (username.length < 2) {
+                showAlert('Имя пользователя должно содержать минимум 2 символа', 'error');
+                return;
+            }
+
             currentUsername = username;
+            updateConnectionStatus('connecting');
 
             try {
                 const response = await fetch('/connect', {
@@ -691,14 +942,22 @@
                 const data = await response.json();
 
                 if (data.status === 'connected') {
-                    updateConnectionStatus(true);
-                    showAlert(`Успешное подключение к WiFi сети: ${data.wifi_network}`);
+                    updateConnectionStatus('connected');
+                    showAlert(`Успешное подключение к локальной сети: ${data.subnet}`);
                     loadMessages();
                     loadNetworkUsers();
+
+                    // Добавляем системное сообщение
+                    addMessageToChat({
+                        is_system: true,
+                        message: `Вы подключились к чату как ${username}`
+                    });
                 } else {
-                    showAlert(data.message, 'error');
+                    updateConnectionStatus('disconnected');
+                    showAlert(data.message || 'Ошибка подключения', 'error');
                 }
             } catch (error) {
+                updateConnectionStatus('disconnected');
                 showAlert('Ошибка подключения: ' + error.message, 'error');
             }
         }
@@ -706,8 +965,18 @@
         async function disconnectFromServer() {
             try {
                 await fetch('/disconnect', { method: 'POST' });
-                updateConnectionStatus(false);
-                showAlert('Отключено от WiFi чата');
+                updateConnectionStatus('disconnected');
+                showAlert('Отключено от локального чата');
+
+                // Добавляем системное сообщение
+                addMessageToChat({
+                    is_system: true,
+                    message: 'Вы отключились от чата'
+                });
+
+                // Сбрасываем список пользователей
+                updateUsersList([]);
+                updateRecipientList([]);
             } catch (error) {
                 showAlert('Ошибка отключения: ' + error.message, 'error');
             }
@@ -759,19 +1028,31 @@
                 const response = await fetch('/messages');
                 const messages = await response.json();
 
-                messagesContainer.innerHTML = '';
-                document.getElementById('messageCount').textContent = messages.length;
+                // Сохраняем текущую позицию прокрутки
+                const wasScrolledToBottom =
+                    messagesContainer.scrollHeight - messagesContainer.clientHeight <=
+                    messagesContainer.scrollTop + 50;
 
-                if (messages.length === 0) {
-                    messagesContainer.innerHTML = `
-                        <div class="message">
-                            <div class="message-content">
-                                Нет сообщений. Будьте первым в вашей WiFi сети!
+                // Очищаем только если есть новые сообщения
+                if (messages.length > messageCount) {
+                    messagesContainer.innerHTML = '';
+
+                    if (messages.length === 0) {
+                        messagesContainer.innerHTML = `
+                            <div class="message system">
+                                <div class="message-content">
+                                    Нет сообщений. Будьте первым в вашей локальной сети!
+                                </div>
                             </div>
-                        </div>
-                    `;
-                } else {
-                    messages.forEach(addMessageToChat);
+                        `;
+                    } else {
+                        messages.forEach(addMessageToChat);
+                    }
+
+                    // Восстанавливаем позицию прокрутки
+                    if (wasScrolledToBottom) {
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    }
                 }
             } catch (error) {
                 console.error('Ошибка загрузки сообщений:', error);
@@ -790,22 +1071,10 @@
             }
         }
 
-        async function refreshNetworkInfo() {
-            try {
-                const response = await fetch('/network/refresh');
-                const networkInfo = await response.json();
-                showAlert('Информация о сети обновлена');
-                return networkInfo;
-            } catch (error) {
-                console.error('Ошибка обновления сети:', error);
-                return null;
-            }
-        }
-
         async function updateSettings() {
             const encryptionEnabled = encryptionToggle.checked;
             const encryptionKey = document.getElementById('encryptionKey').value;
-            const username = document.getElementById('username').value;
+            const username = document.getElementById('username').value.trim();
 
             if (!encryptionKey) {
                 showAlert('Введите ключ шифрования', 'error');
@@ -839,21 +1108,28 @@
                 const response = await fetch('/status');
                 const status = await response.json();
 
-                updateConnectionStatus(status.connected);
+                updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
                 document.getElementById('encryptionStatus').textContent =
                     status.encryption_enabled ? 'ВКЛ' : 'ВЫКЛ';
 
                 encryptionToggle.checked = status.encryption_enabled;
-                document.getElementById('username').value = status.username;
+
+                if (status.username && status.username !== currentUsername) {
+                    document.getElementById('username').value = status.username;
+                    currentUsername = status.username;
+                }
 
                 // Обновляем информацию о сети
                 if (status.connected) {
                     updateNetworkInfo({
-                        current_ssid: status.wifi_network,
-                        ssid_hash: status.ssid_hash,
+                        subnet: status.subnet,
+                        local_ip: status.local_ip,
+                        subnet_hash: status.subnet_hash,
                         total_users: status.network_users_count
                     });
-                    loadNetworkUsers();
+                    if (!isConnecting) {
+                        loadNetworkUsers();
+                    }
                 }
 
             } catch (error) {
@@ -869,11 +1145,19 @@
         refreshNetworkBtn.addEventListener('click', loadNetworkUsers);
         recipientSelect.addEventListener('change', updateMessageTypeDisplay);
 
-        document.getElementById('messageText').addEventListener('keypress', function(e) {
+        messageText.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                if (!sendBtn.disabled) {
+                    sendMessage();
+                }
             }
+        });
+
+        messageText.addEventListener('input', function() {
+            // Динамическая высота текстового поля
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
         });
 
         // Автообновление
@@ -894,6 +1178,9 @@
         // Инициализация
         updateStatus();
         loadMessages();
+
+        // Фокус на поле ввода сообщения при загрузке
+        messageText.focus();
     </script>
 </body>
 </html>
