@@ -1,26 +1,36 @@
-# Используем официальный python-образ как базовый
-FROM python:3.11-slim
+# Используем официальный Python образ
+FROM python:3.10-slim
 
-# Устанавливаем зависимости для сборки Python пакетов
+# Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка рабочей директории
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем requirements.txt отдельно для кэширования слоёв
+# Копируем requirements сначала для кэширования
 COPY requirements.txt .
 
-# Устанавливаем зависимости python
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+# Устанавливаем Python зависимости
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем остальной проект в контейнер
+# Копируем весь проект
 COPY . .
 
-# Открываем порт для приложения
-EXPOSE 8000
+# Создаем необходимые директории
+RUN mkdir -p server/templates client/templates
 
-# Запускаем приложение через python app.py
+# Проверяем структуру файлов
+RUN echo "Структура проекта:" && find . -type f -name "*.py" | head -10
+
+# Открываем порты
+EXPOSE 10000 5001
+
+# Переменные окружения
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_DEBUG=0
+
+# Команда запуска (по умолчанию запускает сервер)
 CMD ["python", "server/app.py"]

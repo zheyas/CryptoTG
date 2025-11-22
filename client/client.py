@@ -108,7 +108,7 @@ class CryptoManager:
 
 
 class WebSocketChatClient:
-    def __init__(self, server_url='https://your-app-name.onrender.com'):
+    def __init__(self, server_url='https://cryptotg.onrender.com'):  # ← Ваш URL
         self.server_url = server_url
         self.sio = socketio.Client()
         self.connected = False
