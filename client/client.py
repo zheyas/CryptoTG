@@ -8,7 +8,7 @@ import base64
 import subprocess
 import platform
 import hashlib
-import requests
+import time
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -17,63 +17,36 @@ from cryptography.hazmat.backends import default_backend
 app = Flask(__name__, template_folder='.')
 
 
-class WiFiManager:
+class NetworkManager:
     def __init__(self):
-        self.current_ssid = None
-        self.ssid_hash = None
+        self.current_subnet = None
+        self.subnet_hash = None
 
-    def get_wifi_ssid(self):
-        """Получение SSID текущей WiFi сети"""
+    def get_local_ip(self):
+        """Получение локального IP адреса"""
         try:
-            if platform.system() == "Windows":
-                result = subprocess.run(["netsh", "wlan", "show", "interfaces"],
-                                        capture_output=True, text=True, encoding='cp866')
-                for line in result.stdout.split('\n'):
-                    if "SSID" in line and "BSSID" not in line:
-                        ssid = line.split(":")[1].strip()
-                        if ssid:
-                            return ssid
+            # Создаем временное соединение чтобы определить локальный IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except:
+            return "127.0.0.1"
 
-            elif platform.system() == "Darwin":  # macOS
-                result = subprocess.run(
-                    ["/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport", "-I"],
-                    capture_output=True, text=True)
-                for line in result.stdout.split('\n'):
-                    if " SSID:" in line:
-                        ssid = line.split(":")[1].strip()
-                        if ssid:
-                            return ssid
+    def get_ip_subnet(self):
+        """Получение подсети IP адреса"""
+        local_ip = self.get_local_ip()
+        ip_parts = local_ip.split('.')
+        if len(ip_parts) == 4:
+            # Используем первые три октета как идентификатор подсети
+            subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
+            return subnet
+        return "unknown_subnet"
 
-            elif platform.system() == "Linux":
-                try:
-                    result = subprocess.run(["iwgetid", "-r"],
-                                            capture_output=True, text=True)
-                    ssid = result.stdout.strip()
-                    if ssid:
-                        return ssid
-                except:
-                    # Попробуем другой способ для Linux
-                    result = subprocess.run(["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
-                                            capture_output=True, text=True)
-                    for line in result.stdout.split('\n'):
-                        if line.startswith('да:'):  # Russian locale
-                            ssid = line.split(':')[1]
-                            if ssid:
-                                return ssid
-                        elif line.startswith('yes:'):  # English locale
-                            ssid = line.split(':')[1]
-                            if ssid:
-                                return ssid
-
-            return "unknown_wifi_network"
-
-        except Exception as e:
-            print(f"Ошибка получения SSID: {e}")
-            return "unknown_wifi_network"
-
-    def get_ssid_hash(self, ssid):
-        """Получение хэша SSID"""
-        return hashlib.md5(ssid.encode()).hexdigest()
+    def get_subnet_hash(self, subnet):
+        """Получение хэша подсети"""
+        return hashlib.md5(subnet.encode()).hexdigest()
 
 
 class CryptoManager:
@@ -135,7 +108,7 @@ class CryptoManager:
 
 
 class WebChatClient:
-    def __init__(self, server_host='localhost', server_port=5000):
+    def __init__(self, server_host='localhost', server_port=5002):
         self.server_host = server_host
         self.server_port = server_port
         self.socket = None
@@ -144,48 +117,60 @@ class WebChatClient:
         self.encryption_enabled = True
         self.encryption_key = "secret123"
         self.crypto = CryptoManager()
-        self.wifi_manager = WiFiManager()
+        self.network_manager = NetworkManager()
         self.network_users = []
         self.client_id = None
-        self.ssid_hash = None
+        self.subnet_hash = None
+        self.local_ip = None
         self.messages = []
         self.receive_thread = None
 
-        # Получаем информацию о WiFi при инициализации
-        self.current_ssid = self.wifi_manager.get_wifi_ssid()
-        self.ssid_hash = self.wifi_manager.get_ssid_hash(self.current_ssid)
-        print(f"Текущая WiFi сеть: {self.current_ssid}")
+        # Получаем информацию о сети при инициализации
+        self.local_ip = self.network_manager.get_local_ip()
+        self.current_subnet = self.network_manager.get_ip_subnet()
+        self.subnet_hash = self.network_manager.get_subnet_hash(self.current_subnet)
+        print(f"Локальный IP: {self.local_ip}")
+        print(f"Подсеть: {self.current_subnet}")
 
     def connect_to_server(self):
-        """Подключение к серверу и регистрация в WiFi сети"""
-        try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.connect((self.server_host, self.server_port))
-            self.connected = True
+        """Подключение к серверу и регистрация в подсети"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.settimeout(10)
+                self.socket.connect((self.server_host, self.server_port))
+                self.connected = True
 
-            # Регистрируемся на сервере
-            registration_data = {
-                'type': 'register',
-                'ssid': self.current_ssid,
-                'ssid_hash': self.ssid_hash,
-                'username': self.username,
-                'client_port': 5001,  # Порт веб-клиента
-                'timestamp': datetime.now().isoformat()
-            }
+                # Регистрируемся на сервере
+                registration_data = {
+                    'type': 'register',
+                    'subnet': self.current_subnet,
+                    'subnet_hash': self.subnet_hash,
+                    'username': self.username,
+                    'local_ip': self.local_ip,
+                    'client_port': 5001,
+                    'timestamp': datetime.now().isoformat()
+                }
 
-            self.socket.send(json.dumps(registration_data).encode('utf-8'))
+                self.socket.send(json.dumps(registration_data).encode('utf-8'))
 
-            # Запускаем поток для приема сообщений
-            self.receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
-            self.receive_thread.start()
+                # Запускаем поток для приема сообщений
+                self.receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
+                self.receive_thread.start()
 
-            print(f"Подключено к серверу {self.server_host}:{self.server_port}")
-            print(f"Зарегистрирован в WiFi сети: {self.current_ssid}")
-            return True
+                print(f"Подключено к серверу {self.server_host}:{self.server_port}")
+                print(f"Зарегистрирован в подсети: {self.current_subnet}")
+                return True
 
-        except Exception as e:
-            print(f"Ошибка подключения: {e}")
-            return False
+            except Exception as e:
+                print(f"Попытка {attempt + 1} подключения не удалась: {e}")
+                if attempt < max_retries - 1:
+                    print("Повторная попытка через 2 секунды...")
+                    time.sleep(2)
+                else:
+                    print(f"Не удалось подключиться после {max_retries} попыток")
+                    return False
 
     def disconnect_from_server(self):
         """Отключение от сервера"""
@@ -217,24 +202,24 @@ class WebChatClient:
         if message_type == 'network_info':
             # Информация о сети и пользователях
             self.client_id = data.get('your_id')
-            received_ssid_hash = data.get('ssid_hash')
-            if received_ssid_hash:
-                self.ssid_hash = received_ssid_hash
+            received_subnet_hash = data.get('subnet_hash')
+            if received_subnet_hash:
+                self.subnet_hash = received_subnet_hash
             self.network_users = data.get('users', [])
-            print(f"Получен список пользователей в сети: {len(self.network_users)}")
+            print(f"Получен список пользователей в подсети: {len(self.network_users)}")
 
         elif message_type == 'user_joined':
             # Новый пользователь присоединился
             new_user = data.get('user')
             if new_user and new_user not in self.network_users:
                 self.network_users.append(new_user)
-                print(f"Новый пользователь в сети: {new_user['username']}")
+                print(f"Новый пользователь в подсети: {new_user['username']}")
 
         elif message_type == 'user_left':
             # Пользователь вышел
             left_user_id = data.get('user_id')
             self.network_users = [u for u in self.network_users if u['id'] != left_user_id]
-            print(f"Пользователь вышел из сети: {left_user_id}")
+            print(f"Пользователь вышел из подсети: {left_user_id}")
 
         elif message_type == 'message':
             # Сообщение от другого пользователя
@@ -276,7 +261,7 @@ class WebChatClient:
                 self.messages.pop(0)
 
     def send_message(self, message_text, recipient="all"):
-        """Отправка сообщения в WiFi сеть через сервер"""
+        """Отправка сообщения в подсеть через сервер"""
         if not self.connected:
             return False
 
@@ -292,7 +277,7 @@ class WebChatClient:
                 'username': self.username,
                 'message': encrypted_message,
                 'encrypted': self.encryption_enabled,
-                'ssid_hash': self.ssid_hash,
+                'subnet_hash': self.subnet_hash,
                 'timestamp': datetime.now().isoformat(),
                 'recipient': recipient
             }
@@ -325,7 +310,7 @@ class WebChatClient:
                 heartbeat_data = {
                     'type': 'heartbeat',
                     'client_id': self.client_id,
-                    'ssid_hash': self.ssid_hash,
+                    'subnet_hash': self.subnet_hash,
                     'timestamp': datetime.now().isoformat()
                 }
                 self.socket.send(json.dumps(heartbeat_data).encode('utf-8'))
@@ -353,16 +338,18 @@ def connect():
     chat_client.server_host = server_host
     chat_client.username = username
 
-    # Обновляем информацию о WiFi
-    chat_client.current_ssid = chat_client.wifi_manager.get_wifi_ssid()
-    chat_client.ssid_hash = chat_client.wifi_manager.get_ssid_hash(chat_client.current_ssid)
+    # Обновляем информацию о сети
+    chat_client.local_ip = chat_client.network_manager.get_local_ip()
+    chat_client.current_subnet = chat_client.network_manager.get_ip_subnet()
+    chat_client.subnet_hash = chat_client.network_manager.get_subnet_hash(chat_client.current_subnet)
 
     if chat_client.connect_to_server():
         return jsonify({
             'status': 'connected',
             'message': 'Успешное подключение',
-            'wifi_network': chat_client.current_ssid,
-            'ssid_hash': chat_client.ssid_hash
+            'subnet': chat_client.current_subnet,
+            'local_ip': chat_client.local_ip,
+            'subnet_hash': chat_client.subnet_hash
         })
     else:
         return jsonify({'status': 'error', 'message': 'Ошибка подключения'})
@@ -399,10 +386,11 @@ def get_messages():
 
 @app.route('/network/users')
 def get_network_users():
-    """Получение пользователей в WiFi сети"""
+    """Получение пользователей в подсети"""
     return jsonify({
-        'current_ssid': chat_client.current_ssid,
-        'ssid_hash': chat_client.ssid_hash,
+        'local_ip': chat_client.local_ip,
+        'subnet': chat_client.current_subnet,
+        'subnet_hash': chat_client.subnet_hash,
         'users': chat_client.network_users,
         'total_users': len(chat_client.network_users)
     })
@@ -410,13 +398,15 @@ def get_network_users():
 
 @app.route('/network/refresh')
 def refresh_network():
-    """Обновление информации о WiFi сети"""
-    chat_client.current_ssid = chat_client.wifi_manager.get_wifi_ssid()
-    chat_client.ssid_hash = chat_client.wifi_manager.get_ssid_hash(chat_client.current_ssid)
+    """Обновление информации о сети"""
+    chat_client.local_ip = chat_client.network_manager.get_local_ip()
+    chat_client.current_subnet = chat_client.network_manager.get_ip_subnet()
+    chat_client.subnet_hash = chat_client.network_manager.get_subnet_hash(chat_client.current_subnet)
 
     return jsonify({
-        'current_ssid': chat_client.current_ssid,
-        'ssid_hash': chat_client.ssid_hash
+        'local_ip': chat_client.local_ip,
+        'subnet': chat_client.current_subnet,
+        'subnet_hash': chat_client.subnet_hash
     })
 
 
@@ -446,8 +436,9 @@ def get_status():
         'encryption_enabled': chat_client.encryption_enabled,
         'server_host': chat_client.server_host,
         'server_port': chat_client.server_port,
-        'wifi_network': chat_client.current_ssid,
-        'ssid_hash': chat_client.ssid_hash,
+        'local_ip': chat_client.local_ip,
+        'subnet': chat_client.current_subnet,
+        'subnet_hash': chat_client.subnet_hash,
         'network_users_count': len(chat_client.network_users),
         'client_id': chat_client.client_id
     })
@@ -469,8 +460,9 @@ heartbeat_thread.start()
 def start_web_client(host='0.0.0.0', port=5001):
     """Запуск веб-клиента"""
     print(f"Веб-клиент запущен на http://{host}:{port}")
-    print(f"Текущая WiFi сеть: {chat_client.current_ssid}")
-    print(f"SSID Hash: {chat_client.ssid_hash}")
+    print(f"Локальный IP: {chat_client.local_ip}")
+    print(f"Подсеть: {chat_client.current_subnet}")
+    print(f"Subnet Hash: {chat_client.subnet_hash}")
     print(f"Для подключения откройте браузер и перейдите по указанному адресу")
     app.run(host=host, port=port, debug=False)
 
