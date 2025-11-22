@@ -1,5 +1,7 @@
+from socket import socket
+
 from flask import Flask, render_template, request, jsonify
-import socket
+import socketio
 import threading
 import json
 from datetime import datetime
@@ -25,7 +27,6 @@ class NetworkManager:
     def get_local_ip(self):
         """Получение локального IP адреса"""
         try:
-            # Создаем временное соединение чтобы определить локальный IP
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
@@ -39,7 +40,6 @@ class NetworkManager:
         local_ip = self.get_local_ip()
         ip_parts = local_ip.split('.')
         if len(ip_parts) == 4:
-            # Используем первые три октета как идентификатор подсети
             subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
             return subnet
         return "unknown_subnet"
@@ -107,11 +107,10 @@ class CryptoManager:
             return f"[Не удалось расшифровать]"
 
 
-class WebChatClient:
-    def __init__(self, server_host='localhost', server_port=5002):
-        self.server_host = server_host
-        self.server_port = server_port
-        self.socket = None
+class WebSocketChatClient:
+    def __init__(self, server_url='https://your-app-name.onrender.com'):
+        self.server_url = server_url
+        self.sio = socketio.Client()
         self.connected = False
         self.username = "WebUser"
         self.encryption_enabled = True
@@ -123,103 +122,104 @@ class WebChatClient:
         self.subnet_hash = None
         self.local_ip = None
         self.messages = []
-        self.receive_thread = None
 
-        # Получаем информацию о сети при инициализации
+        # Инициализация информации о сети
         self.local_ip = self.network_manager.get_local_ip()
         self.current_subnet = self.network_manager.get_ip_subnet()
         self.subnet_hash = self.network_manager.get_subnet_hash(self.current_subnet)
-        print(f"Локальный IP: {self.local_ip}")
-        print(f"Подсеть: {self.current_subnet}")
+
+        # Настройка обработчиков событий WebSocket
+        self.setup_event_handlers()
+
+    def setup_event_handlers(self):
+        """Настройка обработчиков событий WebSocket"""
+
+        @self.sio.event
+        def connect():
+            print("✅ Успешное подключение к серверу")
+            self.connected = True
+            self.register_client()
+
+        @self.sio.event
+        def disconnect():
+            print("❌ Отключение от сервера")
+            self.connected = False
+
+        @self.sio.event
+        def network_info(data):
+            """Обработка информации о сети"""
+            print(f"📡 Получена информация о сети: {len(data.get('users', []))} пользователей")
+            self.subnet_hash = data.get('subnet_hash')
+            self.client_id = data.get('your_id')
+            self.network_users = data.get('users', [])
+
+        @self.sio.event
+        def network_message(data):
+            """Обработка входящих сообщений"""
+            self.process_received_message(data)
+
+        @self.sio.event
+        def error(data):
+            """Обработка ошибок"""
+            print(f"❌ Ошибка: {data.get('message')}")
 
     def connect_to_server(self):
-        """Подключение к серверу и регистрация в подсети"""
+        """Подключение к серверу через WebSocket"""
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.socket.settimeout(10)
-                self.socket.connect((self.server_host, self.server_port))
-                self.connected = True
-
-                # Регистрируемся на сервере
-                registration_data = {
-                    'type': 'register',
-                    'subnet': self.current_subnet,
-                    'subnet_hash': self.subnet_hash,
-                    'username': self.username,
-                    'local_ip': self.local_ip,
-                    'client_port': 5001,
-                    'timestamp': datetime.now().isoformat()
-                }
-
-                self.socket.send(json.dumps(registration_data).encode('utf-8'))
-
-                # Запускаем поток для приема сообщений
-                self.receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
-                self.receive_thread.start()
-
-                print(f"Подключено к серверу {self.server_host}:{self.server_port}")
-                print(f"Зарегистрирован в подсети: {self.current_subnet}")
+                print(f"🔗 Попытка подключения {attempt + 1} к {self.server_url}...")
+                self.sio.connect(self.server_url)
                 return True
-
             except Exception as e:
-                print(f"Попытка {attempt + 1} подключения не удалась: {e}")
+                print(f"❌ Ошибка подключения: {e}")
                 if attempt < max_retries - 1:
-                    print("Повторная попытка через 2 секунды...")
-                    time.sleep(2)
+                    wait_time = 5 * (attempt + 1)
+                    print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                    time.sleep(wait_time)
                 else:
-                    print(f"Не удалось подключиться после {max_retries} попыток")
+                    print(f"💥 Не удалось подключиться после {max_retries} попыток")
                     return False
 
     def disconnect_from_server(self):
         """Отключение от сервера"""
+        if self.connected:
+            self.sio.disconnect()
         self.connected = False
-        if self.socket:
-            self.socket.close()
-        print("Отключено от сервера")
+        print("🔌 Отключено от сервера")
 
-    def receive_messages(self):
-        """Прием сообщений от сервера"""
-        while self.connected:
-            try:
-                message = self.socket.recv(1024).decode('utf-8')
-                if not message:
-                    break
+    def register_client(self):
+        """Регистрация клиента на сервере"""
+        if not self.connected:
+            return False
 
-                data = json.loads(message)
-                self.process_received_message(data)
+        registration_data = {
+            'subnet': self.current_subnet,
+            'username': self.username,
+            'local_ip': self.local_ip,
+            'client_id': f"client_{datetime.now().timestamp()}"
+        }
 
-            except Exception as e:
-                if self.connected:
-                    print(f"Ошибка приема: {e}")
-                break
+        self.sio.emit('register', registration_data)
+        print(f"👤 Зарегистрирован как {self.username} в подсети {self.current_subnet}")
+        return True
 
     def process_received_message(self, data):
         """Обработка полученного сообщения"""
         message_type = data.get('type')
 
-        if message_type == 'network_info':
-            # Информация о сети и пользователях
-            self.client_id = data.get('your_id')
-            received_subnet_hash = data.get('subnet_hash')
-            if received_subnet_hash:
-                self.subnet_hash = received_subnet_hash
-            self.network_users = data.get('users', [])
-            print(f"Получен список пользователей в подсети: {len(self.network_users)}")
-
-        elif message_type == 'user_joined':
+        if message_type == 'user_joined':
             # Новый пользователь присоединился
             new_user = data.get('user')
             if new_user and new_user not in self.network_users:
                 self.network_users.append(new_user)
-                print(f"Новый пользователь в подсети: {new_user['username']}")
+                print(f"👋 Новый пользователь в подсети: {new_user['username']}")
 
         elif message_type == 'user_left':
             # Пользователь вышел
             left_user_id = data.get('user_id')
-            self.network_users = [u for u in self.network_users if u['id'] != left_user_id]
-            print(f"Пользователь вышел из подсети: {left_user_id}")
+            self.network_users = [u for u in self.network_users if u.get('id') != left_user_id]
+            print(f"👋 Пользователь вышел из подсети: {left_user_id}")
 
         elif message_type == 'message':
             # Сообщение от другого пользователя
@@ -260,9 +260,12 @@ class WebChatClient:
             if len(self.messages) > 100:
                 self.messages.pop(0)
 
+            print(f"📨 Новое сообщение от {username}: {display_message}")
+
     def send_message(self, message_text, recipient="all"):
-        """Отправка сообщения в подсеть через сервер"""
+        """Отправка сообщения в подсеть через WebSocket"""
         if not self.connected:
+            print("❌ Не подключен к серверу")
             return False
 
         try:
@@ -273,18 +276,16 @@ class WebChatClient:
                 encrypted_message = message_text
 
             data = {
-                'type': 'message',
+                'subnet_hash': self.subnet_hash,
                 'username': self.username,
                 'message': encrypted_message,
-                'encrypted': self.encryption_enabled,
-                'subnet_hash': self.subnet_hash,
-                'timestamp': datetime.now().isoformat(),
-                'recipient': recipient
+                'recipient': recipient,
+                'encrypted': self.encryption_enabled
             }
 
-            self.socket.send(json.dumps(data).encode('utf-8'))
+            self.sio.emit('send_message', data)
 
-            # Также добавляем в локальную историю
+            # Добавляем в локальную историю
             message_type = "приватное" if recipient != "all" else "публичное"
             self.messages.append({
                 'username': self.username,
@@ -297,29 +298,27 @@ class WebChatClient:
                 'recipient': recipient
             })
 
+            print(f"📤 Сообщение отправлено: {message_text}")
             return True
 
         except Exception as e:
-            print(f"Ошибка отправки: {e}")
+            print(f"❌ Ошибка отправки: {e}")
             return False
 
-    def send_heartbeat(self):
-        """Отправка heartbeat для поддержания соединения"""
-        if self.connected and self.socket:
-            try:
-                heartbeat_data = {
-                    'type': 'heartbeat',
-                    'client_id': self.client_id,
-                    'subnet_hash': self.subnet_hash,
-                    'timestamp': datetime.now().isoformat()
-                }
-                self.socket.send(json.dumps(heartbeat_data).encode('utf-8'))
-            except:
-                self.connected = False
+    def update_network_info(self):
+        """Обновление информации о сети"""
+        self.local_ip = self.network_manager.get_local_ip()
+        self.current_subnet = self.network_manager.get_ip_subnet()
+        self.subnet_hash = self.network_manager.get_subnet_hash(self.current_subnet)
+        return {
+            'local_ip': self.local_ip,
+            'subnet': self.current_subnet,
+            'subnet_hash': self.subnet_hash
+        }
 
 
 # Глобальный экземпляр клиента
-chat_client = WebChatClient()
+chat_client = WebSocketChatClient()
 
 
 # Flask маршруты
@@ -332,24 +331,22 @@ def index():
 def connect():
     """Подключение к серверу"""
     data = request.json
-    server_host = data.get('server_host', 'localhost')
+    server_url = data.get('server_url', 'https://your-app-name.onrender.com')
     username = data.get('username', 'WebUser')
 
-    chat_client.server_host = server_host
+    chat_client.server_url = server_url
     chat_client.username = username
 
     # Обновляем информацию о сети
-    chat_client.local_ip = chat_client.network_manager.get_local_ip()
-    chat_client.current_subnet = chat_client.network_manager.get_ip_subnet()
-    chat_client.subnet_hash = chat_client.network_manager.get_subnet_hash(chat_client.current_subnet)
+    network_info = chat_client.update_network_info()
 
     if chat_client.connect_to_server():
         return jsonify({
             'status': 'connected',
             'message': 'Успешное подключение',
-            'subnet': chat_client.current_subnet,
-            'local_ip': chat_client.local_ip,
-            'subnet_hash': chat_client.subnet_hash
+            'subnet': network_info['subnet'],
+            'local_ip': network_info['local_ip'],
+            'subnet_hash': network_info['subnet_hash']
         })
     else:
         return jsonify({'status': 'error', 'message': 'Ошибка подключения'})
@@ -399,15 +396,8 @@ def get_network_users():
 @app.route('/network/refresh')
 def refresh_network():
     """Обновление информации о сети"""
-    chat_client.local_ip = chat_client.network_manager.get_local_ip()
-    chat_client.current_subnet = chat_client.network_manager.get_ip_subnet()
-    chat_client.subnet_hash = chat_client.network_manager.get_subnet_hash(chat_client.current_subnet)
-
-    return jsonify({
-        'local_ip': chat_client.local_ip,
-        'subnet': chat_client.current_subnet,
-        'subnet_hash': chat_client.subnet_hash
-    })
+    network_info = chat_client.update_network_info()
+    return jsonify(network_info)
 
 
 @app.route('/settings', methods=['POST'])
@@ -424,6 +414,9 @@ def update_settings():
     if 'username' in data:
         chat_client.username = data['username']
 
+    if 'server_url' in data:
+        chat_client.server_url = data['server_url']
+
     return jsonify({'status': 'success', 'message': 'Настройки обновлены'})
 
 
@@ -434,8 +427,7 @@ def get_status():
         'connected': chat_client.connected,
         'username': chat_client.username,
         'encryption_enabled': chat_client.encryption_enabled,
-        'server_host': chat_client.server_host,
-        'server_port': chat_client.server_port,
+        'server_url': chat_client.server_url,
         'local_ip': chat_client.local_ip,
         'subnet': chat_client.current_subnet,
         'subnet_hash': chat_client.subnet_hash,
@@ -444,26 +436,14 @@ def get_status():
     })
 
 
-# Heartbeat для поддержания соединения
-def heartbeat_worker():
-    while True:
-        if chat_client.connected:
-            chat_client.send_heartbeat()
-        threading.Event().wait(30)  # Каждые 30 секунд
-
-
-# Запускаем heartbeat в отдельном потоке
-heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
-heartbeat_thread.start()
-
-
 def start_web_client(host='0.0.0.0', port=5001):
     """Запуск веб-клиента"""
-    print(f"Веб-клиент запущен на http://{host}:{port}")
-    print(f"Локальный IP: {chat_client.local_ip}")
-    print(f"Подсеть: {chat_client.current_subnet}")
-    print(f"Subnet Hash: {chat_client.subnet_hash}")
-    print(f"Для подключения откройте браузер и перейдите по указанному адресу")
+    print(f"🌐 Веб-клиент запущен на http://{host}:{port}")
+    print(f"📍 Локальный IP: {chat_client.local_ip}")
+    print(f"🔗 Подсеть: {chat_client.current_subnet}")
+    print(f"🆔 Subnet Hash: {chat_client.subnet_hash}")
+    print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
+    print(f"📡 Сервер по умолчанию: {chat_client.server_url}")
     app.run(host=host, port=port, debug=False)
 
 
