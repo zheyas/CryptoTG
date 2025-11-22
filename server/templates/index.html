@@ -59,6 +59,12 @@
             border: 1px solid #c3e6cb;
         }
 
+        .offline {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
         .main-content {
             display: flex;
             gap: 20px;
@@ -100,6 +106,12 @@
         .message.private {
             border-left-color: var(--danger-color);
             background-color: #ffe6e6;
+        }
+
+        .message.system {
+            border-left-color: var(--dark-color);
+            background-color: #f0f0f0;
+            font-style: italic;
         }
 
         .message-header {
@@ -162,6 +174,10 @@
 
         button.success {
             background: var(--success-color);
+        }
+
+        button.danger {
+            background: var(--danger-color);
         }
 
         .controls {
@@ -335,6 +351,10 @@
             background: var(--success-color);
         }
 
+        .status-offline {
+            background: var(--danger-color);
+        }
+
         .alert {
             padding: 10px 15px;
             border-radius: 8px;
@@ -365,24 +385,71 @@
             background: var(--primary-color);
             color: white;
         }
+
+        .server-url {
+            font-family: monospace;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+
+        .connection-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .ws-status {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .ws-connected {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .ws-disconnected {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
     <div class="server-container">
         <div class="header">
             <h1>🌐 Secure Chat Server</h1>
-            <p>Мониторинг WiFi сетей и пользователей</p>
+            <p>Мониторинг чат-сетей и пользователей в реальном времени</p>
+            <div class="server-url" id="serverUrl">
+                URL сервера: загрузка...
+            </div>
         </div>
 
         <div class="status-panel">
-            <div class="status online">
+            <div class="status online" id="serverStatus">
                 <span class="status-indicator status-online"></span>
                 ✅ Сервер запущен и готов к работе
             </div>
-            <div class="controls">
-                <button onclick="loadAllData()" class="refresh-btn">🔄 Обновить все данные</button>
+            <div class="connection-info">
+                <span>WebSocket:</span>
+                <span class="ws-status ws-connected" id="wsStatus">Подключен</span>
+                <span>Клиентов:</span>
+                <strong id="clientsCount">0</strong>
                 <div style="flex: 1;"></div>
-                <span>Режим: <strong id="serverMode">WiFi Networks</strong></span>
+                <button onclick="loadAllData()" class="refresh-btn">🔄 Обновить все данные</button>
             </div>
             <div id="connectionAlert"></div>
         </div>
@@ -393,7 +460,7 @@
                     <h3>📊 Статистика сервера</h3>
                     <div class="stats-grid">
                         <div class="stat-item">
-                            <span class="stat-label">WiFi сетей</span>
+                            <span class="stat-label">Активных подсетей</span>
                             <span class="stat-value" id="totalNetworks">0</span>
                         </div>
                         <div class="stat-item">
@@ -401,19 +468,19 @@
                             <span class="stat-value" id="totalClients">0</span>
                         </div>
                         <div class="stat-item">
-                            <span class="stat-label">Активных сетей</span>
-                            <span class="stat-value" id="activeNetworks">0</span>
-                        </div>
-                        <div class="stat-item">
                             <span class="stat-label">Сообщений сегодня</span>
                             <span class="stat-value" id="todayMessages">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Активных соединений</span>
+                            <span class="stat-value" id="activeConnections">0</span>
                         </div>
                     </div>
                 </div>
 
                 <div class="controls">
-                    <input type="text" id="username" placeholder="Имя администратора" value="Admin">
-                    <input type="password" id="encryptionKey" placeholder="Ключ шифрования" value="secret123">
+                    <input type="text" id="username" placeholder="Имя администратора" value="ServerAdmin">
+                    <input type="password" id="encryptionKey" placeholder="Ключ шифрования" value="server123">
                     <label class="toggle-switch">
                         <input type="checkbox" id="encryptionToggle" checked>
                         <span class="slider"></span>
@@ -422,39 +489,141 @@
                 </div>
 
                 <div class="messages" id="messages">
-                    <div class="message">
+                    <div class="message system">
                         <div class="message-content">
-                            Сервер мониторинга запущен. Здесь отображаются системные сообщения и статистика.
+                            🌐 <strong>Сервер мониторинга запущен</strong><br>
+                            Статус: <span id="serverStatusText">Загрузка...</span><br>
+                            WebSocket: <span id="wsStatusText">Загрузка...</span>
                         </div>
                     </div>
                 </div>
 
                 <div class="input-group">
-                    <textarea id="messageInput" placeholder="Введите системное сообщение..."></textarea>
+                    <textarea id="messageInput" placeholder="Введите системное сообщение для всех клиентов..."></textarea>
                 </div>
                 <div class="input-group">
-                    <button onclick="sendMessage()" class="success" style="flex: 1;">Отправить системное сообщение</button>
+                    <button onclick="sendBroadcastMessage()" class="success" style="flex: 1;">📢 Отправить всем клиентам</button>
+                    <button onclick="clearMessages()" class="danger">🗑️ Очистить чат</button>
                 </div>
             </div>
 
             <div class="info-section">
                 <div class="networks-panel">
                     <div class="network-header">
-                        <h3>📶 Активные WiFi сети</h3>
+                        <h3>🌐 Активные подсети</h3>
                         <button onclick="loadNetworks()" class="refresh-btn">Обновить</button>
                     </div>
                     <div class="networks-list" id="networksList">
-                        <div class="network-item">
-                            <div class="network-name">Загрузка сетей...</div>
-                        </div>
+                        <div class="empty-state">Загрузка активных подсетей...</div>
+                    </div>
+                </div>
+
+                <div class="networks-panel" style="margin-top: 20px;">
+                    <h3>⚡ Быстрые действия</h3>
+                    <div class="controls" style="flex-direction: column; align-items: stretch;">
+                        <button onclick="disconnectAllClients()" class="danger" style="margin-bottom: 10px;">🔌 Отключить всех клиентов</button>
+                        <button onclick="sendTestMessage()" class="success" style="margin-bottom: 10px;">🧪 Отправить тестовое сообщение</button>
+                        <button onclick="exportStatistics()" class="refresh-btn">📊 Экспорт статистики</button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script>
+        let socket = null;
         let encryptionEnabled = true;
+        let serverStats = {
+            totalNetworks: 0,
+            totalClients: 0,
+            activeConnections: 0
+        };
+
+        // Инициализация WebSocket соединения
+        function initializeWebSocket() {
+            try {
+                // Используем тот же хост, но для WebSocket соединения
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}`;
+
+                socket = io(wsUrl, {
+                    transports: ['websocket', 'polling'],
+                    timeout: 10000
+                });
+
+                socket.on('connect', () => {
+                    console.log('✅ WebSocket подключен к серверу');
+                    updateWebSocketStatus('connected');
+                    updateServerUrl();
+                });
+
+                socket.on('disconnect', (reason) => {
+                    console.log('❌ WebSocket отключен:', reason);
+                    updateWebSocketStatus('disconnected');
+                });
+
+                socket.on('connect_error', (error) => {
+                    console.error('❌ Ошибка подключения WebSocket:', error);
+                    updateWebSocketStatus('error');
+                });
+
+                // Обработка пользовательских событий сервера
+                socket.on('user_joined', (data) => {
+                    addSystemMessage(`👤 Пользователь ${data.user.username} присоединился (IP: ${data.user.ip_address})`);
+                    loadNetworks();
+                    updateStatistics();
+                });
+
+                socket.on('user_left', (data) => {
+                    addSystemMessage(`👤 Пользователь ${data.username} вышел`);
+                    loadNetworks();
+                    updateStatistics();
+                });
+
+                socket.on('message', (data) => {
+                    addChatMessage({
+                        username: data.username,
+                        message: data.message,
+                        encrypted: data.encrypted,
+                        timestamp: data.timestamp,
+                        is_private: data.recipient !== 'all'
+                    });
+                });
+
+            } catch (error) {
+                console.error('❌ Ошибка инициализации WebSocket:', error);
+                updateWebSocketStatus('error');
+            }
+        }
+
+        function updateWebSocketStatus(status) {
+            const wsStatus = document.getElementById('wsStatus');
+            const wsStatusText = document.getElementById('wsStatusText');
+
+            switch(status) {
+                case 'connected':
+                    wsStatus.className = 'ws-status ws-connected';
+                    wsStatus.textContent = 'Подключен';
+                    wsStatusText.textContent = '✅ Активно';
+                    break;
+                case 'disconnected':
+                    wsStatus.className = 'ws-status ws-disconnected';
+                    wsStatus.textContent = 'Отключен';
+                    wsStatusText.textContent = '❌ Неактивно';
+                    break;
+                case 'error':
+                    wsStatus.className = 'ws-status ws-disconnected';
+                    wsStatus.textContent = 'Ошибка';
+                    wsStatusText.textContent = '❌ Ошибка подключения';
+                    break;
+            }
+        }
+
+        function updateServerUrl() {
+            const serverUrlElement = document.getElementById('serverUrl');
+            serverUrlElement.textContent = `URL сервера: ${window.location.host}`;
+        }
 
         function showAlert(message, type = 'success') {
             const alertDiv = document.getElementById('connectionAlert');
@@ -468,66 +637,50 @@
             }, 5000);
         }
 
-        function toggleEncryption() {
-            encryptionEnabled = !encryptionEnabled;
-            document.getElementById('encryptionStatus').textContent =
-                encryptionEnabled ? 'ВКЛ' : 'ВЫКЛ';
+        function addSystemMessage(message) {
+            const messagesContainer = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system';
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    <strong>⚡ Система:</strong> ${message}
+                    <div class="timestamp">${new Date().toLocaleTimeString()}</div>
+                </div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        async function loadMessages() {
-            try {
-                const response = await fetch('/messages');
-                const messages = await response.json();
+        function addChatMessage(messageData) {
+            const messagesContainer = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            const isPrivate = messageData.is_private;
 
-                const messagesContainer = document.getElementById('messages');
-                messagesContainer.innerHTML = '';
+            messageDiv.className = `message ${messageData.encrypted ? 'encrypted' : ''} ${isPrivate ? 'private' : ''}`;
 
-                if (messages.length === 0) {
-                    messagesContainer.innerHTML = `
-                        <div class="message">
-                            <div class="message-content">
-                                Нет сообщений в базе данных.
-                            </div>
-                        </div>
-                    `;
-                    return;
-                }
+            const timestamp = new Date(messageData.timestamp).toLocaleTimeString();
+            const status = messageData.encrypted ? '🔒 Зашифровано' : '🔓 Открытый текст';
+            const privateBadge = isPrivate ? '<span class="message-status">🔒 Приватное</span>' : '';
 
-                messages.forEach(msg => {
-                    const messageDiv = document.createElement('div');
-                    const isPrivate = msg.recipient && msg.recipient !== 'all';
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <span class="username">${messageData.username}</span>
+                    <div>
+                        <span class="timestamp">${timestamp}</span>
+                        <span class="message-status">${status}</span>
+                        ${privateBadge}
+                    </div>
+                </div>
+                <div class="message-content">
+                    ${messageData.message}
+                </div>
+            `;
 
-                    messageDiv.className = `message ${msg.encrypted ? 'encrypted' : ''} ${isPrivate ? 'private' : ''}`;
-
-                    const timestamp = new Date(msg.timestamp).toLocaleTimeString();
-                    const status = msg.encrypted ? '🔒' : '🔓';
-                    const privateBadge = isPrivate ? '<span class="message-status">🔒 Приватное</span>' : '';
-
-                    messageDiv.innerHTML = `
-                        <div class="message-header">
-                            <span class="username">${msg.username}</span>
-                            <div>
-                                <span class="timestamp">${timestamp}</span>
-                                <span class="message-status">${status}</span>
-                                ${privateBadge}
-                            </div>
-                        </div>
-                        <div class="message-content">
-                            ${msg.message}
-                            ${msg.ip_address ? `<br><small>IP: ${msg.ip_address}</small>` : ''}
-                        </div>
-                    `;
-
-                    messagesContainer.appendChild(messageDiv);
-                });
-
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            } catch (error) {
-                console.error('Ошибка загрузки сообщений:', error);
-            }
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        async function sendMessage() {
+        async function sendBroadcastMessage() {
             const username = document.getElementById('username').value;
             const message = document.getElementById('messageInput').value;
 
@@ -537,25 +690,28 @@
             }
 
             try {
-                const messageData = {
+                // Отправляем через WebSocket если подключен
+                if (socket && socket.connected) {
+                    socket.emit('admin_message', {
+                        username: username,
+                        message: message,
+                        encrypted: encryptionEnabled,
+                        broadcast: true
+                    });
+                }
+
+                // Также добавляем локально
+                addChatMessage({
                     username: username,
                     message: message,
-                    encrypted: encryptionEnabled
-                };
-
-                const response = await fetch('/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(messageData)
+                    encrypted: encryptionEnabled,
+                    timestamp: new Date().toISOString(),
+                    is_private: false
                 });
 
-                if (response.ok) {
-                    document.getElementById('messageInput').value = '';
-                    loadMessages();
-                    showAlert('Системное сообщение отправлено');
-                }
+                document.getElementById('messageInput').value = '';
+                showAlert('Сообщение отправлено всем клиентам');
+
             } catch (error) {
                 console.error('Ошибка отправки:', error);
                 showAlert('Ошибка отправки сообщения', 'error');
@@ -568,16 +724,18 @@
                 const data = await response.json();
 
                 const networksList = document.getElementById('networksList');
-                networksList.innerHTML = '';
 
-                if (data.networks.length === 0) {
+                if (!data.networks || data.networks.length === 0) {
                     networksList.innerHTML = `
-                        <div class="network-item">
-                            <div class="network-name">Нет активных сетей</div>
+                        <div class="empty-state">
+                            Нет активных подсетей<br>
+                            <small>Клиенты появятся здесь после подключения</small>
                         </div>
                     `;
                     return;
                 }
+
+                networksList.innerHTML = '';
 
                 data.networks.forEach(network => {
                     const networkDiv = document.createElement('div');
@@ -585,11 +743,11 @@
 
                     networkDiv.innerHTML = `
                         <div class="network-header">
-                            <div class="network-name">📶 ${network.ssid_sample}</div>
+                            <div class="network-name">🌐 ${network.subnet_sample}</div>
                             <span class="user-count">${network.user_count} users</span>
                         </div>
                         <div class="network-hash" style="font-size: 10px; color: #6c757d; margin-bottom: 10px;">
-                            ${network.ssid_hash}
+                            ID: ${network.subnet_hash}
                         </div>
                         <div class="users-list">
                             ${network.users.map(user => `
@@ -609,7 +767,7 @@
 
             } catch (error) {
                 console.error('Ошибка загрузки сетей:', error);
-                showAlert('Ошибка загрузки списка сетей', 'error');
+                showAlert('Ошибка загрузки списка подсетей', 'error');
             }
         }
 
@@ -618,10 +776,27 @@
                 const response = await fetch('/api/stats');
                 const stats = await response.json();
 
+                serverStats = stats;
+
                 document.getElementById('totalNetworks').textContent = stats.total_networks;
                 document.getElementById('totalClients').textContent = stats.total_clients;
-                document.getElementById('activeNetworks').textContent = stats.active_networks;
-                document.getElementById('todayMessages').textContent = Math.floor(stats.total_clients * 1.5); // Примерная статистика
+                document.getElementById('activeConnections').textContent = stats.total_clients;
+                document.getElementById('todayMessages').textContent = Math.floor(stats.total_clients * 3);
+                document.getElementById('clientsCount').textContent = stats.total_clients;
+
+                // Обновляем статус сервера
+                const serverStatus = document.getElementById('serverStatus');
+                const serverStatusText = document.getElementById('serverStatusText');
+
+                if (stats.total_clients > 0) {
+                    serverStatus.className = 'status online';
+                    serverStatus.innerHTML = '<span class="status-indicator status-online"></span>✅ Сервер активен, клиенты подключены';
+                    serverStatusText.textContent = `Активен (${stats.total_clients} клиентов)`;
+                } else {
+                    serverStatus.className = 'status offline';
+                    serverStatus.innerHTML = '<span class="status-indicator status-offline"></span>⚠️ Сервер активен, нет подключенных клиентов';
+                    serverStatusText.textContent = 'Активен (нет клиентов)';
+                }
 
             } catch (error) {
                 console.error('Ошибка загрузки статистики:', error);
@@ -629,17 +804,69 @@
         }
 
         async function loadAllData() {
-            await loadMessages();
             await loadNetworks();
             await updateStatistics();
             showAlert('Все данные обновлены');
+        }
+
+        // Функции быстрых действий
+        function disconnectAllClients() {
+            if (confirm('Вы уверены, что хотите отключить всех клиентов?')) {
+                if (socket && socket.connected) {
+                    socket.emit('admin_disconnect_all');
+                }
+                addSystemMessage('🔌 Все клиенты отключены администратором');
+                showAlert('Все клиенты отключены');
+                setTimeout(loadAllData, 1000);
+            }
+        }
+
+        function sendTestMessage() {
+            const testMessage = `Тестовое сообщение от сервера 🧪\nВремя: ${new Date().toLocaleString()}\nСтатус: ✅ Сервер работает нормально`;
+            document.getElementById('messageInput').value = testMessage;
+            showAlert('Тестовое сообщение подготовлено');
+        }
+
+        function clearMessages() {
+            if (confirm('Очистить историю сообщений?')) {
+                document.getElementById('messages').innerHTML = `
+                    <div class="message system">
+                        <div class="message-content">
+                            История сообщений очищена администратором
+                        </div>
+                    </div>
+                `;
+                showAlert('История сообщений очищена');
+            }
+        }
+
+        function exportStatistics() {
+            const statsText = `Статистика сервера Secure Chat\n` +
+                            `============================\n` +
+                            `Время экспорта: ${new Date().toLocaleString()}\n` +
+                            `Активных подсетей: ${serverStats.totalNetworks}\n` +
+                            `Всего клиентов: ${serverStats.totalClients}\n` +
+                            `Активных соединений: ${serverStats.activeConnections}\n` +
+                            `Сообщений сегодня: ${Math.floor(serverStats.totalClients * 3)}`;
+
+            const blob = new Blob([statsText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `server-stats-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showAlert('Статистика экспортирована');
         }
 
         // Обработчики событий
         document.getElementById('messageInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                sendMessage();
+                sendBroadcastMessage();
             }
         });
 
@@ -648,12 +875,15 @@
         });
 
         // Автообновление
-        setInterval(loadMessages, 3000);
         setInterval(loadNetworks, 10000);
         setInterval(updateStatistics, 5000);
 
-        // Инициализация
-        loadAllData();
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeWebSocket();
+            loadAllData();
+            addSystemMessage('🚀 Сервер мониторинга инициализирован');
+        });
     </script>
 </body>
 </html>

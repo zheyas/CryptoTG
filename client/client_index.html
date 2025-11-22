@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure Local Chat</title>
+    <title>Secure Web Chat</title>
     <style>
         :root {
             --primary-color: #007bff;
@@ -610,19 +610,25 @@
             font-weight: 600;
             font-size: 14px;
         }
+
+        .server-url-input {
+            flex: 2;
+        }
     </style>
 </head>
 <body>
     <div class="chat-container">
         <div class="header">
-            <h1>🔒 Secure Local Chat</h1>
-            <p>Безопасное общение в вашей локальной сети</p>
+            <h1>🔒 Secure Web Chat</h1>
+            <p>Безопасное общение через интернет с поддержкой шифрования</p>
         </div>
 
         <div class="connection-panel">
             <div class="input-group">
-                <label for="serverHost">Сервер:</label>
-                <input type="text" id="serverHost" value="localhost" placeholder="Адрес сервера">
+                <label for="serverUrl">URL сервера:</label>
+                <input type="text" id="serverUrl" class="server-url-input"
+                       value="https://your-app-name.onrender.com"
+                       placeholder="https://your-app.onrender.com">
 
                 <label for="username">Имя:</label>
                 <input type="text" id="username" value="WebUser" placeholder="Ваше имя" maxlength="20">
@@ -648,7 +654,16 @@
             <div class="messages" id="messagesContainer">
                 <div class="message system">
                     <div class="message-content">
-                        Добро пожаловать в Secure Local Chat! Подключитесь к серверу чтобы начать общение с пользователями в вашей локальной сети.
+                        Добро пожаловать в Secure Web Chat! Подключитесь к серверу чтобы начать общение.
+                    </div>
+                </div>
+                <div class="message system">
+                    <div class="message-content">
+                        💡 <strong>Как использовать:</strong><br>
+                        1. Введите URL вашего сервера на Render.com<br>
+                        2. Укажите ваше имя<br>
+                        3. Нажмите "Подключиться"<br>
+                        4. Начните общение с пользователями в вашей подсети
                     </div>
                 </div>
             </div>
@@ -687,6 +702,7 @@
                         <p>Локальный IP: <span id="networkStatus">Не подключено</span></p>
                         <p>Пользователей онлайн: <span id="onlineUsers">0</span></p>
                         <p>Шифрование: <span id="encryptionStatus">ВКЛ</span></p>
+                        <p>Сервер: <span id="serverStatus">Не подключено</span></p>
                     </div>
                 </div>
                 <div class="settings-group">
@@ -727,11 +743,13 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script>
         let autoRefresh = true;
         let currentUsername = '';
         let isConnecting = false;
         let messageCount = 0;
+        let socket = null;
 
         // Элементы интерфейса
         const connectBtn = document.getElementById('connectBtn');
@@ -746,6 +764,7 @@
         const recipientSelect = document.getElementById('recipientSelect');
         const messageType = document.getElementById('messageType');
         const messageText = document.getElementById('messageText');
+        const serverUrlInput = document.getElementById('serverUrl');
 
         // Функции обновления интерфейса
         function updateConnectionStatus(status) {
@@ -754,11 +773,13 @@
 
             if (status === 'connected') {
                 indicator.classList.add('status-connected');
-                connectionStatus.innerHTML = '<span class="status-indicator status-connected"></span>Подключено к локальному чату';
+                connectionStatus.innerHTML = '<span class="status-indicator status-connected"></span>Подключено к серверу';
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
                 sendBtn.disabled = false;
                 isConnecting = false;
+                document.getElementById('serverStatus').textContent = 'Подключено';
+                document.getElementById('serverStatus').style.color = 'var(--success-color)';
             } else if (status === 'connecting') {
                 indicator.classList.add('status-connecting');
                 connectionStatus.innerHTML = '<span class="status-indicator status-connecting"></span>Подключение...';
@@ -766,6 +787,8 @@
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
                 isConnecting = true;
+                document.getElementById('serverStatus').textContent = 'Подключение...';
+                document.getElementById('serverStatus').style.color = 'var(--warning-color)';
             } else {
                 indicator.classList.add('status-disconnected');
                 connectionStatus.innerHTML = '<span class="status-indicator status-disconnected"></span>Не подключено';
@@ -773,6 +796,8 @@
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
                 isConnecting = false;
+                document.getElementById('serverStatus').textContent = 'Не подключено';
+                document.getElementById('serverStatus').style.color = 'var(--danger-color)';
             }
         }
 
@@ -909,13 +934,18 @@
             }
         }
 
-        // API функции
-        async function connectToServer() {
-            const serverHost = document.getElementById('serverHost').value;
+        // WebSocket функции
+        function connectToServer() {
+            const serverUrl = serverUrlInput.value.trim();
             const username = document.getElementById('username').value.trim();
 
-            if (!serverHost || !username) {
-                showAlert('Заполните все поля для подключения', 'error');
+            if (!serverUrl) {
+                showAlert('Введите URL сервера', 'error');
+                return;
+            }
+
+            if (!username) {
+                showAlert('Введите имя пользователя', 'error');
                 return;
             }
 
@@ -928,137 +958,200 @@
             updateConnectionStatus('connecting');
 
             try {
-                const response = await fetch('/connect', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        server_host: serverHost,
-                        username: username
-                    })
+                // Закрываем существующее соединение если есть
+                if (socket) {
+                    socket.disconnect();
+                }
+
+                // Создаем новое соединение
+                socket = io(serverUrl, {
+                    transports: ['websocket', 'polling'],
+                    timeout: 10000
                 });
 
-                const data = await response.json();
-
-                if (data.status === 'connected') {
+                // Обработчики событий WebSocket
+                socket.on('connect', () => {
+                    console.log('✅ WebSocket подключен');
                     updateConnectionStatus('connected');
-                    showAlert(`Успешное подключение к локальной сети: ${data.subnet}`);
-                    loadMessages();
-                    loadNetworkUsers();
+                    showAlert(`Успешное подключение к серверу`);
+
+                    // Регистрируем клиента
+                    socket.emit('register', {
+                        subnet: '192.168.0.0/24',
+                        username: username,
+                        local_ip: 'auto',
+                        client_id: `client_${Date.now()}`
+                    });
 
                     // Добавляем системное сообщение
                     addMessageToChat({
                         is_system: true,
                         message: `Вы подключились к чату как ${username}`
                     });
-                } else {
+                });
+
+                socket.on('disconnect', (reason) => {
+                    console.log('❌ WebSocket отключен:', reason);
                     updateConnectionStatus('disconnected');
-                    showAlert(data.message || 'Ошибка подключения', 'error');
-                }
+                    showAlert('Соединение с сервером потеряно', 'error');
+
+                    addMessageToChat({
+                        is_system: true,
+                        message: 'Соединение с сервером потеряно'
+                    });
+                });
+
+                socket.on('network_info', (data) => {
+                    console.log('📡 Получена информация о сети:', data);
+                    updateNetworkInfo(data);
+                    updateUsersList(data.users);
+                    updateRecipientList(data.users);
+                });
+
+                socket.on('network_message', (data) => {
+                    console.log('📨 Получено сообщение:', data);
+                    processIncomingMessage(data);
+                });
+
+                socket.on('error', (data) => {
+                    console.error('❌ Ошибка WebSocket:', data);
+                    showAlert(data.message || 'Ошибка соединения', 'error');
+                });
+
+                socket.on('connect_error', (error) => {
+                    console.error('❌ Ошибка подключения:', error);
+                    updateConnectionStatus('disconnected');
+                    showAlert('Ошибка подключения к серверу: ' + error.message, 'error');
+                });
+
             } catch (error) {
+                console.error('❌ Ошибка при подключении:', error);
                 updateConnectionStatus('disconnected');
                 showAlert('Ошибка подключения: ' + error.message, 'error');
             }
         }
 
-        async function disconnectFromServer() {
-            try {
-                await fetch('/disconnect', { method: 'POST' });
-                updateConnectionStatus('disconnected');
-                showAlert('Отключено от локального чата');
-
-                // Добавляем системное сообщение
-                addMessageToChat({
-                    is_system: true,
-                    message: 'Вы отключились от чата'
-                });
-
-                // Сбрасываем список пользователей
-                updateUsersList([]);
-                updateRecipientList([]);
-            } catch (error) {
-                showAlert('Ошибка отключения: ' + error.message, 'error');
+        function disconnectFromServer() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
             }
+            updateConnectionStatus('disconnected');
+            showAlert('Отключено от сервера');
+
+            // Добавляем системное сообщение
+            addMessageToChat({
+                is_system: true,
+                message: 'Вы отключились от чата'
+            });
+
+            // Сбрасываем список пользователей
+            updateUsersList([]);
+            updateRecipientList([]);
         }
 
-        async function sendMessage() {
-            const messageText = document.getElementById('messageText').value.trim();
+        function sendMessage() {
+            const messageTextValue = messageText.value.trim();
             const recipient = recipientSelect.value;
 
-            if (!messageText) {
+            if (!messageTextValue) {
                 showAlert('Введите сообщение', 'error');
                 return;
             }
 
+            if (!socket || !socket.connected) {
+                showAlert('Нет соединения с сервером', 'error');
+                return;
+            }
+
             try {
-                const response = await fetch('/send', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: messageText,
-                        recipient: recipient
-                    })
+                const encryptionEnabled = encryptionToggle.checked;
+
+                // Отправляем сообщение через WebSocket
+                socket.emit('send_message', {
+                    subnet_hash: document.getElementById('subnetHash').textContent || 'default',
+                    username: currentUsername,
+                    message: messageTextValue,
+                    recipient: recipient,
+                    encrypted: encryptionEnabled
                 });
 
-                const data = await response.json();
+                // Добавляем сообщение в локальную историю
+                const messageTypeText = recipient === 'all' ? 'публичное' : 'приватное';
+                addMessageToChat({
+                    username: currentUsername,
+                    message: messageTextValue,
+                    encrypted: encryptionEnabled,
+                    status: `📤 отправлено (${messageTypeText})`,
+                    timestamp: new Date().toLocaleTimeString(),
+                    type: 'sent',
+                    is_private: recipient !== 'all',
+                    recipient: recipient
+                });
 
-                if (data.status === 'success') {
-                    document.getElementById('messageText').value = '';
-                    loadMessages();
+                // Очищаем поле ввода
+                messageText.value = '';
+                messageText.style.height = 'auto';
 
-                    // Показываем уведомление о типе сообщения
-                    if (recipient === 'all') {
-                        showAlert('📢 Публичное сообщение отправлено всем в сети');
-                    } else {
-                        showAlert(`🔒 Приватное сообщение отправлено пользователю ${recipient}`);
-                    }
+                // Показываем уведомление
+                if (recipient === 'all') {
+                    showAlert('📢 Публичное сообщение отправлено всем в сети');
                 } else {
-                    showAlert(data.message, 'error');
+                    showAlert(`🔒 Приватное сообщение отправлено пользователю ${recipient}`);
                 }
+
             } catch (error) {
+                console.error('❌ Ошибка отправки сообщения:', error);
                 showAlert('Ошибка отправки: ' + error.message, 'error');
             }
         }
 
-        async function loadMessages() {
-            try {
-                const response = await fetch('/messages');
-                const messages = await response.json();
+        function processIncomingMessage(data) {
+            const messageType = data.type;
 
-                // Сохраняем текущую позицию прокрутки
-                const wasScrolledToBottom =
-                    messagesContainer.scrollHeight - messagesContainer.clientHeight <=
-                    messagesContainer.scrollTop + 50;
+            if (messageType === 'user_joined') {
+                // Новый пользователь присоединился
+                const newUser = data.user;
+                addMessageToChat({
+                    is_system: true,
+                    message: `Пользователь ${newUser.username} присоединился к чату`
+                });
+                loadNetworkUsers();
 
-                // Очищаем только если есть новые сообщения
-                if (messages.length > messageCount) {
-                    messagesContainer.innerHTML = '';
+            } else if (messageType === 'user_left') {
+                // Пользователь вышел
+                addMessageToChat({
+                    is_system: true,
+                    message: `Пользователь ${data.username} вышел из чата`
+                });
+                loadNetworkUsers();
 
-                    if (messages.length === 0) {
-                        messagesContainer.innerHTML = `
-                            <div class="message system">
-                                <div class="message-content">
-                                    Нет сообщений. Будьте первым в вашей локальной сети!
-                                </div>
-                            </div>
-                        `;
-                    } else {
-                        messages.forEach(addMessageToChat);
-                    }
+            } else if (messageType === 'message') {
+                // Обычное сообщение
+                const username = data.username || 'Unknown';
+                const messageText = data.message || '';
+                const isEncrypted = data.encrypted || false;
+                const recipient = data.recipient || 'all';
+                const isPrivate = recipient !== 'all';
 
-                    // Восстанавливаем позицию прокрутки
-                    if (wasScrolledToBottom) {
-                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                    }
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки сообщений:', error);
+                // Обработка шифрования (в реальном приложении здесь будет дешифровка)
+                const displayMessage = messageText;
+                const status = isEncrypted ? "🔒 зашифровано" : "🔓 открытый текст";
+
+                addMessageToChat({
+                    username: username,
+                    message: displayMessage,
+                    encrypted: isEncrypted,
+                    status: status,
+                    timestamp: data.timestamp || new Date().toLocaleTimeString(),
+                    type: 'received',
+                    is_private: isPrivate,
+                    recipient: recipient
+                });
             }
         }
 
+        // API функции для совместимости
         async function loadNetworkUsers() {
             try {
                 const response = await fetch('/network/users');
@@ -1108,7 +1201,11 @@
                 const response = await fetch('/status');
                 const status = await response.json();
 
-                updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
+                // Обновляем только если WebSocket не подключен
+                if (!socket || !socket.connected) {
+                    updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
+                }
+
                 document.getElementById('encryptionStatus').textContent =
                     status.encryption_enabled ? 'ВКЛ' : 'ВЫКЛ';
 
@@ -1127,9 +1224,6 @@
                         subnet_hash: status.subnet_hash,
                         total_users: status.network_users_count
                     });
-                    if (!isConnecting) {
-                        loadNetworkUsers();
-                    }
                 }
 
             } catch (error) {
@@ -1160,27 +1254,21 @@
             this.style.height = (this.scrollHeight) + 'px';
         });
 
-        // Автообновление
+        // Автообновление статуса
         setInterval(() => {
             if (autoRefresh) {
-                loadMessages();
                 updateStatus();
             }
-        }, 2000);
-
-        // Обновление списка пользователей каждые 10 секунд
-        setInterval(() => {
-            if (autoRefresh) {
-                loadNetworkUsers();
-            }
-        }, 10000);
+        }, 5000);
 
         // Инициализация
         updateStatus();
-        loadMessages();
 
         // Фокус на поле ввода сообщения при загрузке
         messageText.focus();
+
+        // Пример URL сервера для демонстрации
+        serverUrlInput.placeholder = "https://your-cryptotg-app.onrender.com";
     </script>
 </body>
 </html>
