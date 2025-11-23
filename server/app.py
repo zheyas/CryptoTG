@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 import hashlib
 from datetime import datetime
 import json
@@ -19,9 +19,14 @@ class NetworkManager:
         self.ip_subnets = {}
         self.clients = {}  # {socket_id: client_info}
         self.socket_to_client = {}  # {socket_id: client_id}
+        self.banned_users = set()  # Заблокированные пользователи
 
     def add_client(self, socket_id, client_id, subnet, username, ip_address):
         """Добавление клиента в подсеть"""
+        # Проверяем, не заблокирован ли пользователь
+        if username in self.banned_users:
+            return None
+
         subnet_hash = hashlib.md5(subnet.encode()).hexdigest()
 
         client_info = {
@@ -90,6 +95,48 @@ class NetworkManager:
                 return user
         return None
 
+    def get_all_users(self):
+        """Получение списка всех пользователей"""
+        all_users = []
+        for subnet_users in self.ip_subnets.values():
+            for user in subnet_users:
+                all_users.append({
+                    'id': user['id'],
+                    'username': user['username'],
+                    'ip_address': user['ip_address'],
+                    'subnet': user['subnet'],
+                    'subnet_hash': user['subnet_hash']
+                })
+        return all_users
+
+    def disconnect_user(self, user_id):
+        """Принудительное отключение пользователя"""
+        for client_id, client_info in self.clients.items():
+            if client_id == user_id:
+                try:
+                    socketio.emit('force_disconnect',
+                                  {'reason': 'Отключен администратором'},
+                                  room=client_info['socket_id'])
+                    disconnect(client_info['socket_id'])
+                    return True
+                except Exception as e:
+                    logger.error(f"Ошибка отключения пользователя: {e}")
+        return False
+
+    def ban_user(self, username, reason):
+        """Блокировка пользователя"""
+        self.banned_users.add(username)
+
+        # Отключаем всех пользователей с таким именем
+        disconnected_count = 0
+        for client_id, client_info in list(self.clients.items()):
+            if client_info['username'] == username:
+                if self.disconnect_user(client_id):
+                    disconnected_count += 1
+
+        logger.info(f"Пользователь {username} заблокирован. Отключено {disconnected_count} сессий")
+        return disconnected_count
+
     def broadcast_to_subnet(self, subnet_hash, message, exclude_socket_id=None):
         """Отправка сообщения всем в подсети через WebSocket"""
         subnet_users = self.get_subnet_users(subnet_hash)
@@ -134,10 +181,20 @@ def handle_register(data):
         local_ip = data.get('local_ip', request.remote_addr)
         client_id = data.get('client_id', f"{request.sid}_{datetime.now().timestamp()}")
 
+        # Проверяем, не заблокирован ли пользователь
+        if username in network_manager.banned_users:
+            emit('registration_failed', {'message': 'Пользователь заблокирован'})
+            disconnect(request.sid)
+            return
+
         # Добавляем клиента в комнату (subnet)
         subnet_hash = network_manager.add_client(
             request.sid, client_id, subnet, username, local_ip
         )
+
+        if subnet_hash is None:
+            emit('registration_failed', {'message': 'Регистрация не удалась'})
+            return
 
         join_room(subnet_hash)
 
@@ -208,6 +265,203 @@ def handle_send_message(data):
         emit('error', {'message': 'Failed to send message'})
 
 
+# Административные WebSocket события
+@socketio.on('admin_message')
+def handle_admin_message(data):
+    """Обработка административного сообщения"""
+    try:
+        username = data.get('username', 'ServerAdmin')
+        message = data.get('message', '')
+        broadcast = data.get('broadcast', False)
+
+        if broadcast:
+            # Отправляем всем подсетям
+            for subnet_hash in network_manager.ip_subnets.keys():
+                network_manager.broadcast_to_subnet(subnet_hash, {
+                    'type': 'message',
+                    'username': username,
+                    'message': message,
+                    'encrypted': False,
+                    'timestamp': datetime.now().isoformat(),
+                    'is_system': True
+                })
+            logger.info(f"Административное сообщение отправлено всем сетям")
+        else:
+            # Отправляем отправителю
+            emit('network_message', {
+                'type': 'message',
+                'username': username,
+                'message': message,
+                'encrypted': False,
+                'timestamp': datetime.now().isoformat(),
+                'is_system': True
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка административного сообщения: {e}")
+
+
+@socketio.on('admin_disconnect_all')
+def handle_admin_disconnect_all():
+    """Отключение всех клиентов администратором"""
+    try:
+        disconnected_count = 0
+        for client_id in list(network_manager.clients.keys()):
+            if network_manager.disconnect_user(client_id):
+                disconnected_count += 1
+
+        # Очищаем все данные
+        network_manager.ip_subnets.clear()
+        network_manager.clients.clear()
+        network_manager.socket_to_client.clear()
+
+        emit('admin_action_result', {
+            'action': 'disconnect_all',
+            'result': 'success',
+            'disconnected_count': disconnected_count
+        })
+        logger.info(f"Администратор отключил всех клиентов: {disconnected_count}")
+
+    except Exception as e:
+        logger.error(f"Ошибка отключения всех клиентов: {e}")
+        emit('admin_action_result', {
+            'action': 'disconnect_all',
+            'result': 'error',
+            'message': str(e)
+        })
+
+
+@socketio.on('admin_disconnect_user')
+def handle_admin_disconnect_user(data):
+    """Отключение конкретного пользователя"""
+    try:
+        user_id = data.get('user_id')
+        username = data.get('username', 'Unknown')
+
+        success = network_manager.disconnect_user(user_id)
+
+        if success:
+            emit('user_disconnected', {'username': username})
+            emit('admin_action_result', {
+                'action': 'disconnect_user',
+                'result': 'success',
+                'username': username
+            })
+            logger.info(f"Администратор отключил пользователя: {username}")
+        else:
+            emit('admin_action_result', {
+                'action': 'disconnect_user',
+                'result': 'error',
+                'message': 'User not found'
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка отключения пользователя: {e}")
+        emit('admin_action_result', {
+            'action': 'disconnect_user',
+            'result': 'error',
+            'message': str(e)
+        })
+
+
+@socketio.on('admin_ban_user')
+def handle_admin_ban_user(data):
+    """Блокировка пользователя"""
+    try:
+        username = data.get('username')
+        reason = data.get('reason', 'Нарушение правил чата')
+
+        if not username:
+            emit('admin_action_result', {
+                'action': 'ban_user',
+                'result': 'error',
+                'message': 'Username required'
+            })
+            return
+
+        disconnected_count = network_manager.ban_user(username, reason)
+
+        emit('user_banned', {
+            'username': username,
+            'reason': reason,
+            'disconnected_count': disconnected_count
+        })
+
+        emit('admin_action_result', {
+            'action': 'ban_user',
+            'result': 'success',
+            'username': username,
+            'disconnected_count': disconnected_count
+        })
+
+        logger.info(f"Администратор заблокировал пользователя: {username}, причина: {reason}")
+
+    except Exception as e:
+        logger.error(f"Ошибка блокировки пользователя: {e}")
+        emit('admin_action_result', {
+            'action': 'ban_user',
+            'result': 'error',
+            'message': str(e)
+        })
+
+
+@socketio.on('admin_private_message')
+def handle_admin_private_message(data):
+    """Приватное сообщение от администратора"""
+    try:
+        recipient = data.get('recipient')
+        message = data.get('message')
+        admin_name = data.get('from', 'ServerAdmin')
+
+        if not recipient or not message:
+            emit('admin_action_result', {
+                'action': 'private_message',
+                'result': 'error',
+                'message': 'Recipient and message required'
+            })
+            return
+
+        # Ищем пользователя во всех подсетях
+        recipient_found = False
+        for subnet_hash in network_manager.ip_subnets.keys():
+            recipient_user = network_manager.get_client_by_username(subnet_hash, recipient)
+            if recipient_user:
+                recipient_client = network_manager.clients.get(recipient_user['id'])
+                if recipient_client:
+                    socketio.emit('network_message', {
+                        'type': 'message',
+                        'username': f"{admin_name} (Администратор)",
+                        'message': message,
+                        'encrypted': False,
+                        'timestamp': datetime.now().isoformat(),
+                        'is_private': True,
+                        'is_system': True
+                    }, room=recipient_client['socket_id'])
+                    recipient_found = True
+
+        if recipient_found:
+            emit('admin_action_result', {
+                'action': 'private_message',
+                'result': 'success',
+                'recipient': recipient
+            })
+            logger.info(f"Административное приватное сообщение для {recipient}")
+        else:
+            emit('admin_action_result', {
+                'action': 'private_message',
+                'result': 'error',
+                'message': 'Recipient not found'
+            })
+
+    except Exception as e:
+        logger.error(f"Ошибка отправки приватного сообщения: {e}")
+        emit('admin_action_result', {
+            'action': 'private_message',
+            'result': 'error',
+            'message': str(e)
+        })
+
+
 # HTTP маршруты для веб-интерфейса
 @app.route('/')
 def index():
@@ -240,7 +494,18 @@ def get_stats():
     return jsonify({
         'total_networks': len(network_manager.ip_subnets),
         'total_clients': len(network_manager.clients),
-        'active_networks': len([n for n in network_manager.ip_subnets.values() if n])
+        'active_networks': len([n for n in network_manager.ip_subnets.values() if n]),
+        'banned_users': len(network_manager.banned_users)
+    })
+
+
+@app.route('/api/users')
+def get_users():
+    """Получение списка всех пользователей"""
+    users = network_manager.get_all_users()
+    return jsonify({
+        'total_users': len(users),
+        'users': users
     })
 
 

@@ -1,22 +1,23 @@
-from socket import socket
-
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 import socketio
 import threading
 import json
 from datetime import datetime
 import os
 import base64
-import subprocess
-import platform
 import hashlib
 import time
+import secrets
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
 app = Flask(__name__, template_folder='.')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_urlsafe(32))
+
+# Хранилище для множественных клиентов
+client_sessions = {}
 
 
 class NetworkManager:
@@ -27,6 +28,7 @@ class NetworkManager:
     def get_local_ip(self):
         """Получение локального IP адреса"""
         try:
+            import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
@@ -107,12 +109,13 @@ class CryptoManager:
             return f"[Не удалось расшифровать]"
 
 
-class WebSocketChatClient:
-    def __init__(self, server_url='https://cryptotg.onrender.com'):  # ← Ваш URL
+class UserChatClient:
+    def __init__(self, session_id, server_url='https://cryptotg.onrender.com'):
+        self.session_id = session_id
         self.server_url = server_url
         self.sio = socketio.Client()
         self.connected = False
-        self.username = "WebUser"
+        self.username = f"User_{secrets.token_hex(4)}"  # Уникальное имя по умолчанию
         self.encryption_enabled = True
         self.encryption_key = "secret123"
         self.crypto = CryptoManager()
@@ -136,19 +139,19 @@ class WebSocketChatClient:
 
         @self.sio.event
         def connect():
-            print("✅ Успешное подключение к серверу")
+            print(f"✅ [{self.username}] Успешное подключение к серверу")
             self.connected = True
             self.register_client()
 
         @self.sio.event
         def disconnect():
-            print("❌ Отключение от сервера")
+            print(f"❌ [{self.username}] Отключение от сервера")
             self.connected = False
 
         @self.sio.event
         def network_info(data):
             """Обработка информации о сети"""
-            print(f"📡 Получена информация о сети: {len(data.get('users', []))} пользователей")
+            print(f"📡 [{self.username}] Получена информация о сети: {len(data.get('users', []))} пользователей")
             self.subnet_hash = data.get('subnet_hash')
             self.client_id = data.get('your_id')
             self.network_users = data.get('users', [])
@@ -159,26 +162,41 @@ class WebSocketChatClient:
             self.process_received_message(data)
 
         @self.sio.event
+        def user_joined(data):
+            """Новый пользователь присоединился"""
+            new_user = data.get('user')
+            if new_user and new_user not in self.network_users:
+                self.network_users.append(new_user)
+                print(f"👋 [{self.username}] Новый пользователь: {new_user['username']}")
+
+        @self.sio.event
+        def user_left(data):
+            """Пользователь вышел"""
+            left_username = data.get('username')
+            self.network_users = [u for u in self.network_users if u.get('username') != left_username]
+            print(f"👋 [{self.username}] Пользователь вышел: {left_username}")
+
+        @self.sio.event
         def error(data):
             """Обработка ошибок"""
-            print(f"❌ Ошибка: {data.get('message')}")
+            print(f"❌ [{self.username}] Ошибка: {data.get('message')}")
 
     def connect_to_server(self):
         """Подключение к серверу через WebSocket"""
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                print(f"🔗 Попытка подключения {attempt + 1} к {self.server_url}...")
+                print(f"🔗 [{self.username}] Попытка подключения {attempt + 1} к {self.server_url}...")
                 self.sio.connect(self.server_url)
                 return True
             except Exception as e:
-                print(f"❌ Ошибка подключения: {e}")
+                print(f"❌ [{self.username}] Ошибка подключения: {e}")
                 if attempt < max_retries - 1:
                     wait_time = 5 * (attempt + 1)
-                    print(f"⏳ Повторная попытка через {wait_time} секунд...")
+                    print(f"⏳ [{self.username}] Повторная попытка через {wait_time} секунд...")
                     time.sleep(wait_time)
                 else:
-                    print(f"💥 Не удалось подключиться после {max_retries} попыток")
+                    print(f"💥 [{self.username}] Не удалось подключиться после {max_retries} попыток")
                     return False
 
     def disconnect_from_server(self):
@@ -186,7 +204,7 @@ class WebSocketChatClient:
         if self.connected:
             self.sio.disconnect()
         self.connected = False
-        print("🔌 Отключено от сервера")
+        print(f"🔌 [{self.username}] Отключено от сервера")
 
     def register_client(self):
         """Регистрация клиента на сервере"""
@@ -197,31 +215,18 @@ class WebSocketChatClient:
             'subnet': self.current_subnet,
             'username': self.username,
             'local_ip': self.local_ip,
-            'client_id': f"client_{datetime.now().timestamp()}"
+            'client_id': f"client_{self.session_id}_{datetime.now().timestamp()}"
         }
 
         self.sio.emit('register', registration_data)
-        print(f"👤 Зарегистрирован как {self.username} в подсети {self.current_subnet}")
+        print(f"👤 [{self.username}] Зарегистрирован в подсети {self.current_subnet}")
         return True
 
     def process_received_message(self, data):
         """Обработка полученного сообщения"""
         message_type = data.get('type')
 
-        if message_type == 'user_joined':
-            # Новый пользователь присоединился
-            new_user = data.get('user')
-            if new_user and new_user not in self.network_users:
-                self.network_users.append(new_user)
-                print(f"👋 Новый пользователь в подсети: {new_user['username']}")
-
-        elif message_type == 'user_left':
-            # Пользователь вышел
-            left_user_id = data.get('user_id')
-            self.network_users = [u for u in self.network_users if u.get('id') != left_user_id]
-            print(f"👋 Пользователь вышел из подсети: {left_user_id}")
-
-        elif message_type == 'message':
+        if message_type == 'message':
             # Сообщение от другого пользователя
             username = data.get('username', 'Unknown')
             message_text = data.get('message', '')
@@ -260,12 +265,12 @@ class WebSocketChatClient:
             if len(self.messages) > 100:
                 self.messages.pop(0)
 
-            print(f"📨 Новое сообщение от {username}: {display_message}")
+            print(f"📨 [{self.username}] Новое сообщение от {username}: {display_message}")
 
     def send_message(self, message_text, recipient="all"):
         """Отправка сообщения в подсеть через WebSocket"""
         if not self.connected:
-            print("❌ Не подключен к серверу")
+            print(f"❌ [{self.username}] Не подключен к серверу")
             return False
 
         try:
@@ -298,11 +303,11 @@ class WebSocketChatClient:
                 'recipient': recipient
             })
 
-            print(f"📤 Сообщение отправлено: {message_text}")
+            print(f"📤 [{self.username}] Сообщение отправлено: {message_text}")
             return True
 
         except Exception as e:
-            print(f"❌ Ошибка отправки: {e}")
+            print(f"❌ [{self.username}] Ошибка отправки: {e}")
             return False
 
     def update_network_info(self):
@@ -316,9 +321,53 @@ class WebSocketChatClient:
             'subnet_hash': self.subnet_hash
         }
 
+    def update_settings(self, settings):
+        """Обновление настроек"""
+        if 'username' in settings:
+            self.username = settings['username']
+        if 'encryption_enabled' in settings:
+            self.encryption_enabled = settings['encryption_enabled']
+        if 'encryption_key' in settings:
+            self.encryption_key = settings['encryption_key']
+        if 'server_url' in settings:
+            self.server_url = settings['server_url']
 
-# Глобальный экземпляр клиента
-chat_client = WebSocketChatClient()
+
+# Функции для управления сессиями
+def get_client_session(session_id):
+    """Получение или создание клиентской сессии"""
+    if session_id not in client_sessions:
+        client_sessions[session_id] = UserChatClient(session_id)
+        print(f"🆕 Создана новая сессия: {session_id}")
+    return client_sessions[session_id]
+
+
+def cleanup_old_sessions():
+    """Очистка старых сессий"""
+    while True:
+        try:
+            current_time = time.time()
+            to_remove = []
+
+            for session_id, client in list(client_sessions.items()):
+                # Удаляем сессии старше 1 часа
+                if not client.connected and current_time - getattr(client, 'last_activity', current_time) > 3600:
+                    to_remove.append(session_id)
+
+            for session_id in to_remove:
+                if session_id in client_sessions:
+                    client_sessions[session_id].disconnect_from_server()
+                    del client_sessions[session_id]
+                    print(f"🧹 Удалена старая сессия: {session_id}")
+
+            time.sleep(300)  # Проверка каждые 5 минут
+        except Exception as e:
+            print(f"Ошибка очистки сессий: {e}")
+
+
+# Запуск очистки в отдельном потоке
+cleanup_thread = threading.Thread(target=cleanup_old_sessions, daemon=True)
+cleanup_thread.start()
 
 
 # Flask маршруты
@@ -327,23 +376,47 @@ def index():
     return render_template('client_index.html')
 
 
+@app.route('/session/start', methods=['POST'])
+def start_session():
+    """Создание новой сессии"""
+    session_id = secrets.token_hex(16)
+    client = get_client_session(session_id)
+    return jsonify({
+        'status': 'success',
+        'session_id': session_id,
+        'username': client.username
+    })
+
+
 @app.route('/connect', methods=['POST'])
 def connect():
     """Подключение к серверу"""
     data = request.json
-    server_url = data.get('server_url', 'https://your-app-name.onrender.com')
-    username = data.get('username', 'WebUser')
+    session_id = data.get('session_id')
+    server_url = data.get('server_url', 'https://cryptotg.onrender.com')
+    username = data.get('username')
 
-    chat_client.server_url = server_url
-    chat_client.username = username
+    if not session_id:
+        return jsonify({'status': 'error', 'message': 'Сессия не указана'})
+
+    client = get_client_session(session_id)
+
+    # Обновляем настройки
+    settings = {
+        'server_url': server_url,
+        'username': username
+    }
+    client.update_settings(settings)
 
     # Обновляем информацию о сети
-    network_info = chat_client.update_network_info()
+    network_info = client.update_network_info()
 
-    if chat_client.connect_to_server():
+    if client.connect_to_server():
         return jsonify({
             'status': 'connected',
             'message': 'Успешное подключение',
+            'session_id': session_id,
+            'username': client.username,
             'subnet': network_info['subnet'],
             'local_ip': network_info['local_ip'],
             'subnet_hash': network_info['subnet_hash']
@@ -355,21 +428,33 @@ def connect():
 @app.route('/disconnect', methods=['POST'])
 def disconnect():
     """Отключение от сервера"""
-    chat_client.disconnect_from_server()
-    return jsonify({'status': 'disconnected', 'message': 'Отключено от сервера'})
+    data = request.json
+    session_id = data.get('session_id')
+
+    if session_id and session_id in client_sessions:
+        client_sessions[session_id].disconnect_from_server()
+        return jsonify({'status': 'disconnected', 'message': 'Отключено от сервера'})
+    else:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
 
 
 @app.route('/send', methods=['POST'])
 def send_message():
     """Отправка сообщения"""
-    if not chat_client.connected:
-        return jsonify({'status': 'error', 'message': 'Не подключено к серверу'})
-
     data = request.json
+    session_id = data.get('session_id')
     message = data.get('message', '')
     recipient = data.get('recipient', 'all')
 
-    if chat_client.send_message(message, recipient):
+    if not session_id or session_id not in client_sessions:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
+
+    client = client_sessions[session_id]
+
+    if not client.connected:
+        return jsonify({'status': 'error', 'message': 'Не подключено к серверу'})
+
+    if client.send_message(message, recipient):
         return jsonify({'status': 'success', 'message': 'Сообщение отправлено'})
     else:
         return jsonify({'status': 'error', 'message': 'Ошибка отправки'})
@@ -378,72 +463,70 @@ def send_message():
 @app.route('/messages')
 def get_messages():
     """Получение истории сообщений"""
-    return jsonify(chat_client.messages)
+    session_id = request.args.get('session_id')
+    if session_id and session_id in client_sessions:
+        return jsonify(client_sessions[session_id].messages)
+    else:
+        return jsonify([])
 
 
 @app.route('/network/users')
 def get_network_users():
     """Получение пользователей в подсети"""
-    return jsonify({
-        'local_ip': chat_client.local_ip,
-        'subnet': chat_client.current_subnet,
-        'subnet_hash': chat_client.subnet_hash,
-        'users': chat_client.network_users,
-        'total_users': len(chat_client.network_users)
-    })
-
-
-@app.route('/network/refresh')
-def refresh_network():
-    """Обновление информации о сети"""
-    network_info = chat_client.update_network_info()
-    return jsonify(network_info)
+    session_id = request.args.get('session_id')
+    if session_id and session_id in client_sessions:
+        client = client_sessions[session_id]
+        return jsonify({
+            'local_ip': client.local_ip,
+            'subnet': client.current_subnet,
+            'subnet_hash': client.subnet_hash,
+            'users': client.network_users,
+            'total_users': len(client.network_users)
+        })
+    else:
+        return jsonify({'users': [], 'total_users': 0})
 
 
 @app.route('/settings', methods=['POST'])
 def update_settings():
     """Обновление настроек"""
     data = request.json
+    session_id = data.get('session_id')
 
-    if 'encryption_enabled' in data:
-        chat_client.encryption_enabled = data['encryption_enabled']
-
-    if 'encryption_key' in data:
-        chat_client.encryption_key = data['encryption_key']
-
-    if 'username' in data:
-        chat_client.username = data['username']
-
-    if 'server_url' in data:
-        chat_client.server_url = data['server_url']
-
-    return jsonify({'status': 'success', 'message': 'Настройки обновлены'})
+    if session_id and session_id in client_sessions:
+        client = client_sessions[session_id]
+        client.update_settings(data)
+        return jsonify({'status': 'success', 'message': 'Настройки обновлены'})
+    else:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
 
 
 @app.route('/status')
 def get_status():
     """Получение статуса подключения"""
-    return jsonify({
-        'connected': chat_client.connected,
-        'username': chat_client.username,
-        'encryption_enabled': chat_client.encryption_enabled,
-        'server_url': chat_client.server_url,
-        'local_ip': chat_client.local_ip,
-        'subnet': chat_client.current_subnet,
-        'subnet_hash': chat_client.subnet_hash,
-        'network_users_count': len(chat_client.network_users),
-        'client_id': chat_client.client_id
-    })
+    session_id = request.args.get('session_id')
+    if session_id and session_id in client_sessions:
+        client = client_sessions[session_id]
+        return jsonify({
+            'connected': client.connected,
+            'username': client.username,
+            'encryption_enabled': client.encryption_enabled,
+            'server_url': client.server_url,
+            'local_ip': client.local_ip,
+            'subnet': client.current_subnet,
+            'subnet_hash': client.subnet_hash,
+            'network_users_count': len(client.network_users),
+            'client_id': client.client_id
+        })
+    else:
+        return jsonify({'connected': False, 'username': ''})
 
 
 def start_web_client(host='0.0.0.0', port=5001):
     """Запуск веб-клиента"""
-    print(f"🌐 Веб-клиент запущен на http://{host}:{port}")
-    print(f"📍 Локальный IP: {chat_client.local_ip}")
-    print(f"🔗 Подсеть: {chat_client.current_subnet}")
-    print(f"🆔 Subnet Hash: {chat_client.subnet_hash}")
+    print(f"🌐 Многопользовательский веб-клиент запущен на http://{host}:{port}")
     print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
-    print(f"📡 Сервер по умолчанию: {chat_client.server_url}")
+    print(f"📡 Сервер по умолчанию: https://cryptotg.onrender.com")
     app.run(host=host, port=port, debug=False)
 
 
