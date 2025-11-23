@@ -339,6 +339,18 @@
             color: #6c757d;
         }
 
+        .user-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .user-action-btn {
+            padding: 4px 8px;
+            font-size: 12px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
         .status-indicator {
             display: inline-block;
             width: 8px;
@@ -425,6 +437,68 @@
             padding: 20px;
             color: #6c757d;
             font-style: italic;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 20px;
+            border-radius: 10px;
+            width: 400px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: black;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
         }
     </style>
 </head>
@@ -519,6 +593,15 @@
                 </div>
 
                 <div class="networks-panel" style="margin-top: 20px;">
+                    <h3>👥 Управление пользователями</h3>
+                    <div class="controls" style="flex-direction: column; align-items: stretch;">
+                        <button onclick="showUserManagementModal()" class="success" style="margin-bottom: 10px;">👤 Управление пользователями</button>
+                        <button onclick="showBanUserModal()" class="warning" style="margin-bottom: 10px; background: var(--warning-color);">🚫 Заблокировать пользователя</button>
+                        <button onclick="showSendPrivateModal()" class="primary" style="margin-bottom: 10px;">✉️ Приватное сообщение</button>
+                    </div>
+                </div>
+
+                <div class="networks-panel" style="margin-top: 20px;">
                     <h3>⚡ Быстрые действия</h3>
                     <div class="controls" style="flex-direction: column; align-items: stretch;">
                         <button onclick="disconnectAllClients()" class="danger" style="margin-bottom: 10px;">🔌 Отключить всех клиентов</button>
@@ -526,6 +609,61 @@
                         <button onclick="exportStatistics()" class="refresh-btn">📊 Экспорт статистики</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальные окна -->
+    <div id="userManagementModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>👤 Управление пользователями</h3>
+                <span class="close" onclick="closeModal('userManagementModal')">&times;</span>
+            </div>
+            <div id="userManagementContent">
+                <!-- Содержимое будет заполнено динамически -->
+            </div>
+        </div>
+    </div>
+
+    <div id="banUserModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🚫 Блокировка пользователя</h3>
+                <span class="close" onclick="closeModal('banUserModal')">&times;</span>
+            </div>
+            <div class="form-group">
+                <label for="banUsername">Имя пользователя:</label>
+                <input type="text" id="banUsername" placeholder="Введите имя пользователя">
+            </div>
+            <div class="form-group">
+                <label for="banReason">Причина блокировки:</label>
+                <input type="text" id="banReason" placeholder="Причина блокировки">
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('banUserModal')" class="refresh-btn">Отмена</button>
+                <button onclick="banUser()" class="danger">Заблокировать</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="privateMessageModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>✉️ Приватное сообщение</h3>
+                <span class="close" onclick="closeModal('privateMessageModal')">&times;</span>
+            </div>
+            <div class="form-group">
+                <label for="privateRecipient">Получатель:</label>
+                <input type="text" id="privateRecipient" placeholder="Имя пользователя">
+            </div>
+            <div class="form-group">
+                <label for="privateMessage">Сообщение:</label>
+                <textarea id="privateMessage" placeholder="Введите сообщение" rows="4"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button onclick="closeModal('privateMessageModal')" class="refresh-btn">Отмена</button>
+                <button onclick="sendPrivateMessage()" class="success">Отправить</button>
             </div>
         </div>
     </div>
@@ -543,7 +681,6 @@
         // Инициализация WebSocket соединения
         function initializeWebSocket() {
             try {
-                // Используем тот же хост, но для WebSocket соединения
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${protocol}//${window.location.host}`;
 
@@ -591,12 +728,171 @@
                     });
                 });
 
+                // Обработка административных событий
+                socket.on('user_disconnected', (data) => {
+                    addSystemMessage(`🔌 Пользователь ${data.username} отключен администратором`);
+                    loadNetworks();
+                    updateStatistics();
+                });
+
+                socket.on('user_banned', (data) => {
+                    addSystemMessage(`🚫 Пользователь ${data.username} заблокирован: ${data.reason}`);
+                    loadNetworks();
+                    updateStatistics();
+                });
+
             } catch (error) {
                 console.error('❌ Ошибка инициализации WebSocket:', error);
                 updateWebSocketStatus('error');
             }
         }
 
+        // Функции управления пользователями
+        function showUserManagementModal() {
+            const modal = document.getElementById('userManagementModal');
+            const content = document.getElementById('userManagementContent');
+
+            // Загружаем список пользователей
+            loadUsersList().then(users => {
+                if (users.length === 0) {
+                    content.innerHTML = '<div class="empty-state">Нет активных пользователей</div>';
+                } else {
+                    content.innerHTML = `
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            ${users.map(user => `
+                                <div class="user-item">
+                                    <div class="user-info">
+                                        <span class="user-name">${user.username}</span>
+                                        <span class="user-ip">${user.ip_address} | Сеть: ${user.subnet}</span>
+                                    </div>
+                                    <div class="user-actions">
+                                        <button onclick="disconnectUser('${user.id}', '${user.username}')" class="user-action-btn danger" style="background: var(--danger-color); color: white;">🔌</button>
+                                        <button onclick="sendPrivateMessageTo('${user.username}')" class="user-action-btn success" style="background: var(--success-color); color: white;">✉️</button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="modal-actions">
+                            <button onclick="closeModal('userManagementModal')" class="refresh-btn">Закрыть</button>
+                        </div>
+                    `;
+                }
+            }).catch(error => {
+                content.innerHTML = `<div class="alert alert-error">Ошибка загрузки пользователей: ${error.message}</div>`;
+            });
+
+            modal.style.display = 'block';
+        }
+
+        async function loadUsersList() {
+            try {
+                const response = await fetch('/api/users');
+                const data = await response.json();
+                return data.users || [];
+            } catch (error) {
+                console.error('Ошибка загрузки пользователей:', error);
+                return [];
+            }
+        }
+
+        function disconnectUser(userId, username) {
+            if (confirm(`Вы уверены, что хотите отключить пользователя ${username}?`)) {
+                if (socket && socket.connected) {
+                    socket.emit('admin_disconnect_user', { user_id: userId });
+                    addSystemMessage(`🔌 Пользователь ${username} отключен администратором`);
+                    showAlert(`Пользователь ${username} отключен`);
+                    closeModal('userManagementModal');
+                }
+            }
+        }
+
+        function showBanUserModal() {
+            const modal = document.getElementById('banUserModal');
+            modal.style.display = 'block';
+        }
+
+        function banUser() {
+            const username = document.getElementById('banUsername').value;
+            const reason = document.getElementById('banReason').value;
+
+            if (!username) {
+                showAlert('Введите имя пользователя', 'error');
+                return;
+            }
+
+            if (socket && socket.connected) {
+                socket.emit('admin_ban_user', {
+                    username: username,
+                    reason: reason || 'Нарушение правил чата'
+                });
+                showAlert(`Пользователь ${username} заблокирован`);
+                closeModal('banUserModal');
+
+                // Очищаем поля
+                document.getElementById('banUsername').value = '';
+                document.getElementById('banReason').value = '';
+            }
+        }
+
+        function showSendPrivateModal() {
+            const modal = document.getElementById('privateMessageModal');
+            modal.style.display = 'block';
+        }
+
+        function sendPrivateMessageTo(username) {
+            document.getElementById('privateRecipient').value = username;
+            showSendPrivateModal();
+            closeModal('userManagementModal');
+        }
+
+        function sendPrivateMessage() {
+            const recipient = document.getElementById('privateRecipient').value;
+            const message = document.getElementById('privateMessage').value;
+
+            if (!recipient || !message) {
+                showAlert('Заполните все поля', 'error');
+                return;
+            }
+
+            if (socket && socket.connected) {
+                socket.emit('admin_private_message', {
+                    recipient: recipient,
+                    message: message,
+                    from: document.getElementById('username').value || 'ServerAdmin'
+                });
+
+                addChatMessage({
+                    username: 'ServerAdmin → ' + recipient,
+                    message: message,
+                    encrypted: false,
+                    timestamp: new Date().toISOString(),
+                    is_private: true
+                });
+
+                showAlert(`Приватное сообщение отправлено пользователю ${recipient}`);
+                closeModal('privateMessageModal');
+
+                // Очищаем поля
+                document.getElementById('privateRecipient').value = '';
+                document.getElementById('privateMessage').value = '';
+            }
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        // Закрытие модальных окон при клике вне их
+        window.onclick = function(event) {
+            const modals = document.getElementsByClassName('modal');
+            for (let modal of modals) {
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
+            }
+        }
+
+        // Остальные функции остаются без изменений
         function updateWebSocketStatus(status) {
             const wsStatus = document.getElementById('wsStatus');
             const wsStatusText = document.getElementById('wsStatusText');
@@ -690,7 +986,6 @@
             }
 
             try {
-                // Отправляем через WebSocket если подключен
                 if (socket && socket.connected) {
                     socket.emit('admin_message', {
                         username: username,
@@ -700,7 +995,6 @@
                     });
                 }
 
-                // Также добавляем локально
                 addChatMessage({
                     username: username,
                     message: message,
@@ -784,7 +1078,6 @@
                 document.getElementById('todayMessages').textContent = Math.floor(stats.total_clients * 3);
                 document.getElementById('clientsCount').textContent = stats.total_clients;
 
-                // Обновляем статус сервера
                 const serverStatus = document.getElementById('serverStatus');
                 const serverStatusText = document.getElementById('serverStatusText');
 
@@ -809,7 +1102,6 @@
             showAlert('Все данные обновлены');
         }
 
-        // Функции быстрых действий
         function disconnectAllClients() {
             if (confirm('Вы уверены, что хотите отключить всех клиентов?')) {
                 if (socket && socket.connected) {

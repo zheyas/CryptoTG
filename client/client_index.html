@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Web Chat</title>
     <style>
+        /* Стили остаются без изменений */
         :root {
             --primary-color: #007bff;
             --primary-dark: #0056b3;
@@ -64,6 +65,24 @@
         .header p {
             opacity: 0.9;
             font-size: 14px;
+        }
+
+        .session-info {
+            background: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .session-id {
+            font-family: monospace;
+            background: rgba(0,0,0,0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
         }
 
         .connection-panel {
@@ -614,23 +633,36 @@
         .server-url-input {
             flex: 2;
         }
+
+        .new-session-btn {
+            background: var(--warning-color);
+            color: var(--dark-color);
+        }
+
+        .new-session-btn:hover {
+            background: var(--warning-dark);
+        }
     </style>
 </head>
 <body>
     <div class="chat-container">
         <div class="header">
             <h1>🔒 Secure Web Chat</h1>
-            <p>Безопасное общение через интернет с поддержкой шифрования</p>
+            <p>Многопользовательское безопасное общение через интернет</p>
+            <div class="session-info">
+                <span>Сессия: <span id="sessionId" class="session-id">Не создана</span></span>
+                <button id="newSessionBtn" class="new-session-btn">🆕 Новая сессия</button>
+            </div>
         </div>
 
         <div class="connection-panel">
             <div class="input-group">
                 <label for="serverUrl">URL сервера:</label>
-<input type="text" id="serverUrl" class="server-url-input"
-       value="https://cryptotg.onrender.com"
-       placeholder="https://cryptotg.onrender.com">
+                <input type="text" id="serverUrl" class="server-url-input"
+                       value="https://cryptotg.onrender.com"
+                       placeholder="https://cryptotg.onrender.com">
                 <label for="username">Имя:</label>
-                <input type="text" id="username" value="WebUser" placeholder="Ваше имя" maxlength="20">
+                <input type="text" id="username" placeholder="Ваше имя" maxlength="20">
             </div>
 
             <div class="input-group">
@@ -653,16 +685,7 @@
             <div class="messages" id="messagesContainer">
                 <div class="message system">
                     <div class="message-content">
-                        Добро пожаловать в Secure Web Chat! Подключитесь к серверу чтобы начать общение.
-                    </div>
-                </div>
-                <div class="message system">
-                    <div class="message-content">
-                        💡 <strong>Как использовать:</strong><br>
-                        1. Введите URL вашего сервера на Render.com<br>
-                        2. Укажите ваше имя<br>
-                        3. Нажмите "Подключиться"<br>
-                        4. Начните общение с пользователями в вашей подсети
+                        Добро пожаловать в Secure Web Chat! Создайте сессию и подключитесь к серверу.
                     </div>
                 </div>
             </div>
@@ -701,7 +724,7 @@
                         <p>Локальный IP: <span id="networkStatus">Не подключено</span></p>
                         <p>Пользователей онлайн: <span id="onlineUsers">0</span></p>
                         <p>Шифрование: <span id="encryptionStatus">ВКЛ</span></p>
-                        <p>Сервер: <span id="serverStatus">Не подключено</span></p>
+                        <p>Сессия: <span id="sessionStatus">Не активна</span></p>
                     </div>
                 </div>
                 <div class="settings-group">
@@ -720,7 +743,6 @@
                         </div>
                     </div>
                 </div>
-
             </div>
         </div>
 
@@ -733,7 +755,7 @@
                     </select>
                     <span id="messageType" class="message-type-indicator public-message">📢 Всем</span>
                 </div>
-                <textarea id="messageText" placeholder="Введите ваше сообщение..." maxlength="1000"></textarea>
+                <textarea id="messageText" placeholder="Введите ваше сообщение..." maxlength="1000" disabled></textarea>
                 <div class="input-group">
                     <small style="flex: 1;">Макс. 1000 символов</small>
                     <button id="sendBtn" class="success" disabled>📤 Отправить</button>
@@ -742,18 +764,18 @@
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script>
-        let autoRefresh = true;
+        let currentSessionId = null;
         let currentUsername = '';
         let isConnecting = false;
         let messageCount = 0;
-        let socket = null;
+        let autoRefresh = true;
 
         // Элементы интерфейса
         const connectBtn = document.getElementById('connectBtn');
         const disconnectBtn = document.getElementById('disconnectBtn');
         const sendBtn = document.getElementById('sendBtn');
+        const newSessionBtn = document.getElementById('newSessionBtn');
         const messagesContainer = document.getElementById('messagesContainer');
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionAlert = document.getElementById('connectionAlert');
@@ -764,6 +786,55 @@
         const messageType = document.getElementById('messageType');
         const messageText = document.getElementById('messageText');
         const serverUrlInput = document.getElementById('serverUrl');
+        const usernameInput = document.getElementById('username');
+        const sessionIdElement = document.getElementById('sessionId');
+
+        // Функции для работы с localStorage
+        function saveSessionToStorage(sessionId, username) {
+            localStorage.setItem('chat_session_id', sessionId);
+            localStorage.setItem('chat_username', username);
+            localStorage.setItem('chat_session_time', Date.now().toString());
+        }
+
+        function loadSessionFromStorage() {
+            const sessionId = localStorage.getItem('chat_session_id');
+            const username = localStorage.getItem('chat_username');
+            const sessionTime = localStorage.getItem('chat_session_time');
+
+            // Проверяем, что сессия не старше 24 часов
+            if (sessionId && sessionTime) {
+                const sessionAge = Date.now() - parseInt(sessionTime);
+                if (sessionAge < 24 * 60 * 60 * 1000) { // 24 часа
+                    return { sessionId, username };
+                } else {
+                    // Удаляем просроченную сессию
+                    clearSessionStorage();
+                }
+            }
+            return null;
+        }
+
+        function clearSessionStorage() {
+            localStorage.removeItem('chat_session_id');
+            localStorage.removeItem('chat_username');
+            localStorage.removeItem('chat_session_time');
+        }
+
+        function updateSessionDisplay(sessionId, username) {
+            if (sessionId) {
+                sessionIdElement.textContent = sessionId.substring(0, 8) + '...';
+                if (username) {
+                    usernameInput.value = username;
+                    currentUsername = username;
+                }
+                document.getElementById('sessionStatus').textContent = 'Сохранена';
+                document.getElementById('sessionStatus').style.color = 'var(--success-color)';
+            } else {
+                sessionIdElement.textContent = 'Не создана';
+                document.getElementById('sessionStatus').textContent = 'Не активна';
+                document.getElementById('sessionStatus').style.color = 'var(--danger-color)';
+            }
+        }
 
         // Функции обновления интерфейса
         function updateConnectionStatus(status) {
@@ -776,27 +847,24 @@
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
                 sendBtn.disabled = false;
+                messageText.disabled = false;
                 isConnecting = false;
-                document.getElementById('serverStatus').textContent = 'Подключено';
-                document.getElementById('serverStatus').style.color = 'var(--success-color)';
             } else if (status === 'connecting') {
                 indicator.classList.add('status-connecting');
                 connectionStatus.innerHTML = '<span class="status-indicator status-connecting"></span>Подключение...';
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
+                messageText.disabled = true;
                 isConnecting = true;
-                document.getElementById('serverStatus').textContent = 'Подключение...';
-                document.getElementById('serverStatus').style.color = 'var(--warning-color)';
             } else {
                 indicator.classList.add('status-disconnected');
                 connectionStatus.innerHTML = '<span class="status-indicator status-disconnected"></span>Не подключено';
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
                 sendBtn.disabled = true;
+                messageText.disabled = true;
                 isConnecting = false;
-                document.getElementById('serverStatus').textContent = 'Не подключено';
-                document.getElementById('serverStatus').style.color = 'var(--danger-color)';
             }
         }
 
@@ -850,7 +918,6 @@
             messagesContainer.appendChild(messageDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-            // Обновляем счетчик сообщений
             if (!isSystem) {
                 messageCount++;
                 document.getElementById('messageCount').textContent = messageCount;
@@ -875,7 +942,6 @@
 
         function updateUsersList(users) {
             const usersList = document.getElementById('usersList');
-
             if (!users || users.length === 0) {
                 usersList.innerHTML = '<div class="empty-state">Нет пользователей в сети</div>';
                 return;
@@ -897,15 +963,11 @@
         }
 
         function updateRecipientList(users) {
-            // Сохраняем текущее значение
             const currentValue = recipientSelect.value;
-
-            // Очищаем и добавляем опции
             recipientSelect.innerHTML = '<option value="all">Всем в сети</option>';
 
             if (users && users.length > 0) {
                 users.forEach(user => {
-                    // Не добавляем себя в список получателей
                     if (user.username !== currentUsername) {
                         const option = document.createElement('option');
                         option.value = user.username;
@@ -915,11 +977,9 @@
                 });
             }
 
-            // Восстанавливаем выбранное значение если возможно
             if (currentValue && recipientSelect.querySelector(`option[value="${currentValue}"]`)) {
                 recipientSelect.value = currentValue;
             }
-
             updateMessageTypeDisplay();
         }
 
@@ -933,10 +993,43 @@
             }
         }
 
-        // WebSocket функции
-        function connectToServer() {
+        // Функции работы с сессиями
+        async function createNewSession() {
+            try {
+                const response = await fetch('/session/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+
+                if (!response.ok) throw new Error('Ошибка создания сессии');
+
+                const data = await response.json();
+                currentSessionId = data.session_id;
+                currentUsername = data.username;
+
+                // Сохраняем в localStorage
+                saveSessionToStorage(currentSessionId, currentUsername);
+                updateSessionDisplay(currentSessionId, currentUsername);
+
+                showAlert('🆕 Новая сессия создана! Теперь можно подключиться к серверу.');
+                updateConnectionStatus('disconnected');
+
+                console.log('✅ Создана новая сессия:', currentSessionId);
+
+            } catch (error) {
+                console.error('❌ Ошибка создания сессии:', error);
+                showAlert('Ошибка создания сессии: ' + error.message, 'error');
+            }
+        }
+
+        async function connectToServer() {
+            if (!currentSessionId) {
+                showAlert('Сначала создайте сессию', 'error');
+                return;
+            }
+
             const serverUrl = serverUrlInput.value.trim();
-            const username = document.getElementById('username').value.trim();
+            const username = usernameInput.value.trim();
 
             if (!serverUrl) {
                 showAlert('Введите URL сервера', 'error');
@@ -957,99 +1050,78 @@
             updateConnectionStatus('connecting');
 
             try {
-                // Закрываем существующее соединение если есть
-                if (socket) {
-                    socket.disconnect();
-                }
-
-                // Создаем новое соединение
-                socket = io(serverUrl, {
-                    transports: ['websocket', 'polling'],
-                    timeout: 10000
+                const response = await fetch('/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        server_url: serverUrl,
+                        username: username
+                    })
                 });
 
-                // Обработчики событий WebSocket
-                socket.on('connect', () => {
-                    console.log('✅ WebSocket подключен');
+                const data = await response.json();
+
+                if (data.status === 'connected') {
+                    // Обновляем имя пользователя в хранилище
+                    saveSessionToStorage(currentSessionId, username);
+
                     updateConnectionStatus('connected');
-                    showAlert(`Успешное подключение к серверу`);
+                    showAlert(`✅ Успешное подключение к локальной сети: ${data.subnet}`);
 
-                    // Регистрируем клиента
-                    socket.emit('register', {
-                        subnet: '192.168.0.0/24',
-                        username: username,
-                        local_ip: 'auto',
-                        client_id: `client_${Date.now()}`
-                    });
-
-                    // Добавляем системное сообщение
                     addMessageToChat({
                         is_system: true,
                         message: `Вы подключились к чату как ${username}`
                     });
-                });
 
-                socket.on('disconnect', (reason) => {
-                    console.log('❌ WebSocket отключен:', reason);
+                    loadMessages();
+                    loadNetworkUsers();
+
+                } else {
                     updateConnectionStatus('disconnected');
-                    showAlert('Соединение с сервером потеряно', 'error');
-
-                    addMessageToChat({
-                        is_system: true,
-                        message: 'Соединение с сервером потеряно'
-                    });
-                });
-
-                socket.on('network_info', (data) => {
-                    console.log('📡 Получена информация о сети:', data);
-                    updateNetworkInfo(data);
-                    updateUsersList(data.users);
-                    updateRecipientList(data.users);
-                });
-
-                socket.on('network_message', (data) => {
-                    console.log('📨 Получено сообщение:', data);
-                    processIncomingMessage(data);
-                });
-
-                socket.on('error', (data) => {
-                    console.error('❌ Ошибка WebSocket:', data);
-                    showAlert(data.message || 'Ошибка соединения', 'error');
-                });
-
-                socket.on('connect_error', (error) => {
-                    console.error('❌ Ошибка подключения:', error);
-                    updateConnectionStatus('disconnected');
-                    showAlert('Ошибка подключения к серверу: ' + error.message, 'error');
-                });
-
+                    showAlert(data.message || 'Ошибка подключения', 'error');
+                }
             } catch (error) {
-                console.error('❌ Ошибка при подключении:', error);
                 updateConnectionStatus('disconnected');
                 showAlert('Ошибка подключения: ' + error.message, 'error');
             }
         }
 
-        function disconnectFromServer() {
-            if (socket) {
-                socket.disconnect();
-                socket = null;
+        async function disconnectFromServer() {
+            if (!currentSessionId) {
+                showAlert('Нет активной сессии', 'error');
+                return;
             }
-            updateConnectionStatus('disconnected');
-            showAlert('Отключено от сервера');
 
-            // Добавляем системное сообщение
-            addMessageToChat({
-                is_system: true,
-                message: 'Вы отключились от чата'
-            });
+            try {
+                const response = await fetch('/disconnect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_id: currentSessionId })
+                });
 
-            // Сбрасываем список пользователей
-            updateUsersList([]);
-            updateRecipientList([]);
+                updateConnectionStatus('disconnected');
+                showAlert('Отключено от сервера');
+
+                addMessageToChat({
+                    is_system: true,
+                    message: 'Вы отключились от чата'
+                });
+
+                updateUsersList([]);
+                updateRecipientList([]);
+
+            } catch (error) {
+                showAlert('Ошибка отключения: ' + error.message, 'error');
+            }
         }
 
-        function sendMessage() {
+        async function sendMessage() {
+            if (!currentSessionId) {
+                showAlert('Нет активной сессии', 'error');
+                return;
+            }
+
             const messageTextValue = messageText.value.trim();
             const recipient = recipientSelect.value;
 
@@ -1058,102 +1130,78 @@
                 return;
             }
 
-            if (!socket || !socket.connected) {
-                showAlert('Нет соединения с сервером', 'error');
-                return;
-            }
-
             try {
-                const encryptionEnabled = encryptionToggle.checked;
-
-                // Отправляем сообщение через WebSocket
-                socket.emit('send_message', {
-                    subnet_hash: document.getElementById('subnetHash').textContent || 'default',
-                    username: currentUsername,
-                    message: messageTextValue,
-                    recipient: recipient,
-                    encrypted: encryptionEnabled
+                const response = await fetch('/send', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        message: messageTextValue,
+                        recipient: recipient
+                    })
                 });
 
-                // Добавляем сообщение в локальную историю
-                const messageTypeText = recipient === 'all' ? 'публичное' : 'приватное';
-                addMessageToChat({
-                    username: currentUsername,
-                    message: messageTextValue,
-                    encrypted: encryptionEnabled,
-                    status: `📤 отправлено (${messageTypeText})`,
-                    timestamp: new Date().toLocaleTimeString(),
-                    type: 'sent',
-                    is_private: recipient !== 'all',
-                    recipient: recipient
-                });
+                const data = await response.json();
 
-                // Очищаем поле ввода
-                messageText.value = '';
-                messageText.style.height = 'auto';
+                if (data.status === 'success') {
+                    messageText.value = '';
+                    messageText.style.height = 'auto';
+                    loadMessages();
 
-                // Показываем уведомление
-                if (recipient === 'all') {
-                    showAlert('📢 Публичное сообщение отправлено всем в сети');
+                    if (recipient === 'all') {
+                        showAlert('📢 Публичное сообщение отправлено всем в сети');
+                    } else {
+                        showAlert(`🔒 Приватное сообщение отправлено пользователю ${recipient}`);
+                    }
                 } else {
-                    showAlert(`🔒 Приватное сообщение отправлено пользователю ${recipient}`);
+                    showAlert(data.message, 'error');
                 }
-
             } catch (error) {
-                console.error('❌ Ошибка отправки сообщения:', error);
                 showAlert('Ошибка отправки: ' + error.message, 'error');
             }
         }
 
-        function processIncomingMessage(data) {
-            const messageType = data.type;
+        // API функции
+        async function loadMessages() {
+            if (!currentSessionId) return;
 
-            if (messageType === 'user_joined') {
-                // Новый пользователь присоединился
-                const newUser = data.user;
-                addMessageToChat({
-                    is_system: true,
-                    message: `Пользователь ${newUser.username} присоединился к чату`
-                });
-                loadNetworkUsers();
+            try {
+                const response = await fetch(`/messages?session_id=${currentSessionId}`);
+                const messages = await response.json();
 
-            } else if (messageType === 'user_left') {
-                // Пользователь вышел
-                addMessageToChat({
-                    is_system: true,
-                    message: `Пользователь ${data.username} вышел из чата`
-                });
-                loadNetworkUsers();
+                const wasScrolledToBottom =
+                    messagesContainer.scrollHeight - messagesContainer.clientHeight <=
+                    messagesContainer.scrollTop + 50;
 
-            } else if (messageType === 'message') {
-                // Обычное сообщение
-                const username = data.username || 'Unknown';
-                const messageText = data.message || '';
-                const isEncrypted = data.encrypted || false;
-                const recipient = data.recipient || 'all';
-                const isPrivate = recipient !== 'all';
+                if (messages.length > messageCount) {
+                    messagesContainer.innerHTML = '';
 
-                // Обработка шифрования (в реальном приложении здесь будет дешифровка)
-                const displayMessage = messageText;
-                const status = isEncrypted ? "🔒 зашифровано" : "🔓 открытый текст";
+                    if (messages.length === 0) {
+                        messagesContainer.innerHTML = `
+                            <div class="message system">
+                                <div class="message-content">
+                                    Нет сообщений. Будьте первым в вашей локальной сети!
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        messages.forEach(addMessageToChat);
+                    }
 
-                addMessageToChat({
-                    username: username,
-                    message: displayMessage,
-                    encrypted: isEncrypted,
-                    status: status,
-                    timestamp: data.timestamp || new Date().toLocaleTimeString(),
-                    type: 'received',
-                    is_private: isPrivate,
-                    recipient: recipient
-                });
+                    if (wasScrolledToBottom) {
+                        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    }
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки сообщений:', error);
             }
         }
 
-        // API функции для совместимости
         async function loadNetworkUsers() {
+            if (!currentSessionId) return;
+
             try {
-                const response = await fetch('/network/users');
+                const response = await fetch(`/network/users?session_id=${currentSessionId}`);
                 const networkInfo = await response.json();
                 updateNetworkInfo(networkInfo);
                 updateUsersList(networkInfo.users);
@@ -1164,9 +1212,14 @@
         }
 
         async function updateSettings() {
+            if (!currentSessionId) {
+                showAlert('Сначала создайте сессию', 'error');
+                return;
+            }
+
             const encryptionEnabled = encryptionToggle.checked;
             const encryptionKey = document.getElementById('encryptionKey').value;
-            const username = document.getElementById('username').value.trim();
+            const username = usernameInput.value.trim();
 
             if (!encryptionKey) {
                 showAlert('Введите ключ шифрования', 'error');
@@ -1174,48 +1227,54 @@
             }
 
             try {
-                await fetch('/settings', {
+                const response = await fetch('/settings', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        session_id: currentSessionId,
                         encryption_enabled: encryptionEnabled,
                         encryption_key: encryptionKey,
                         username: username
                     })
                 });
 
-                document.getElementById('encryptionStatus').textContent =
-                    encryptionEnabled ? 'ВКЛ' : 'ВЫКЛ';
+                const data = await response.json();
 
-                showAlert('Настройки обновлены');
+                if (data.status === 'success') {
+                    document.getElementById('encryptionStatus').textContent =
+                        encryptionEnabled ? 'ВКЛ' : 'ВЫКЛ';
+                    currentUsername = username;
+                    // Обновляем имя в хранилище
+                    saveSessionToStorage(currentSessionId, username);
+                    showAlert('Настройки обновлены');
+                } else {
+                    showAlert(data.message, 'error');
+                }
             } catch (error) {
                 showAlert('Ошибка обновления настроек: ' + error.message, 'error');
             }
         }
 
         async function updateStatus() {
+            if (!currentSessionId) return;
+
             try {
-                const response = await fetch('/status');
+                const response = await fetch(`/status?session_id=${currentSessionId}`);
                 const status = await response.json();
 
-                // Обновляем только если WebSocket не подключен
-                if (!socket || !socket.connected) {
-                    updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
-                }
-
+                updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
                 document.getElementById('encryptionStatus').textContent =
                     status.encryption_enabled ? 'ВКЛ' : 'ВЫКЛ';
 
                 encryptionToggle.checked = status.encryption_enabled;
 
                 if (status.username && status.username !== currentUsername) {
-                    document.getElementById('username').value = status.username;
+                    usernameInput.value = status.username;
                     currentUsername = status.username;
+                    // Обновляем имя в хранилище
+                    saveSessionToStorage(currentSessionId, status.username);
                 }
 
-                // Обновляем информацию о сети
                 if (status.connected) {
                     updateNetworkInfo({
                         subnet: status.subnet,
@@ -1223,6 +1282,9 @@
                         subnet_hash: status.subnet_hash,
                         total_users: status.network_users_count
                     });
+                    if (!isConnecting) {
+                        loadNetworkUsers();
+                    }
                 }
 
             } catch (error) {
@@ -1231,6 +1293,7 @@
         }
 
         // Обработчики событий
+        newSessionBtn.addEventListener('click', createNewSession);
         connectBtn.addEventListener('click', connectToServer);
         disconnectBtn.addEventListener('click', disconnectFromServer);
         sendBtn.addEventListener('click', sendMessage);
@@ -1248,25 +1311,40 @@
         });
 
         messageText.addEventListener('input', function() {
-            // Динамическая высота текстового поля
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
         });
 
-        // Автообновление статуса
+        // Автообновление
         setInterval(() => {
-            if (autoRefresh) {
+            if (autoRefresh && currentSessionId) {
+                loadMessages();
                 updateStatus();
             }
-        }, 5000);
+        }, 2000);
 
-        // Инициализация
-        updateStatus();
+        setInterval(() => {
+            if (autoRefresh && currentSessionId) {
+                loadNetworkUsers();
+            }
+        }, 10000);
 
-        // Фокус на поле ввода сообщения при загрузке
-        messageText.focus();
+        // Инициализация - загружаем сохраненную сессию
+        document.addEventListener('DOMContentLoaded', function() {
+            const savedSession = loadSessionFromStorage();
+            if (savedSession) {
+                currentSessionId = savedSession.sessionId;
+                currentUsername = savedSession.username || '';
+                updateSessionDisplay(currentSessionId, currentUsername);
+                showAlert('✅ Загружена сохраненная сессия');
+                updateStatus(); // Проверяем статус подключения
+            } else {
+                showAlert('Создайте новую сессию для начала работы');
+            }
 
-        // Пример URL сервера для демонстрации
+            messageText.focus();
+        });
+
         serverUrlInput.placeholder = "https://your-cryptotg-app.onrender.com";
     </script>
 </body>
