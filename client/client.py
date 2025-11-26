@@ -28,7 +28,6 @@ class NetworkManager:
     def get_local_ip_and_subnet(self):
         """Кроссплатформенное получение локального IP и подсети"""
         try:
-            # Сначала пробуем стандартный метод через socket (работает везде)
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
@@ -156,9 +155,16 @@ class UserChatClient:
     def __init__(self, session_id, server_url='https://cryptotg.onrender.com'):
         self.session_id = session_id
         self.server_url = server_url
-        self.sio = socketio.Client()
+        # Упрощенная конфигурация SocketIO
+        self.sio = socketio.Client(
+            reconnection=True,
+            reconnection_attempts=5,
+            reconnection_delay=1,
+            reconnection_delay_max=5,
+            randomization_factor=0.5
+        )
         self.connected = False
-        self.username = f"User_{secrets.token_hex(4)}"  # Уникальное имя по умолчанию
+        self.username = f"User_{secrets.token_hex(4)}"
         self.encryption_enabled = True
         self.encryption_key = "secret123"
         self.crypto = CryptoManager()
@@ -169,7 +175,7 @@ class UserChatClient:
         self.local_ip = None
         self.current_subnet = None
         self.messages = []
-        self.manual_subnet = None  # Для ручной настройки подсети
+        self.manual_subnet = None
 
         # Инициализация информации о сети
         self.update_network_info()
@@ -190,6 +196,10 @@ class UserChatClient:
         def disconnect():
             print(f"❌ [{self.username}] Отключение от сервера")
             self.connected = False
+
+        @self.sio.event
+        def connect_error(data):
+            print(f"❌ [{self.username}] Ошибка подключения: {data}")
 
         @self.sio.event
         def network_info(data):
@@ -230,16 +240,28 @@ class UserChatClient:
         for attempt in range(max_retries):
             try:
                 print(f"🔗 [{self.username}] Попытка подключения {attempt + 1} к {self.server_url}...")
+
+                # Упрощенное подключение без сложных параметров
                 self.sio.connect(
                     self.server_url,
-                    transports=['websocket', 'polling'],
-                    wait_timeout=10
+                    wait_timeout=10,
+                    wait=False
                 )
-                return True
+
+                # Даем время на установление соединения
+                time.sleep(2)
+
+                if self.sio.connected:
+                    return True
+                else:
+                    raise Exception("Соединение не установлено")
+
             except Exception as e:
-                print(f"❌ [{self.username}] Ошибка подключения: {e}")
+                error_msg = str(e)
+                print(f"❌ [{self.username}] Ошибка подключения: {error_msg}")
+
                 if attempt < max_retries - 1:
-                    wait_time = 5 * (attempt + 1)
+                    wait_time = 3 * (attempt + 1)  # Уменьшили время ожидания
                     print(f"⏳ [{self.username}] Повторная попытка через {wait_time} секунд...")
                     time.sleep(wait_time)
                 else:
@@ -249,7 +271,10 @@ class UserChatClient:
     def disconnect_from_server(self):
         """Отключение от сервера"""
         if self.connected:
-            self.sio.disconnect()
+            try:
+                self.sio.disconnect()
+            except:
+                pass
         self.connected = False
         print(f"🔌 [{self.username}] Отключено от сервера")
 
@@ -285,9 +310,13 @@ class UserChatClient:
             'client_id': f"client_{self.session_id}_{datetime.now().timestamp()}"
         }
 
-        self.sio.emit('register', registration_data)
-        print(f"👤 [{self.username}] Зарегистрирован в подсети {current_subnet}")
-        return True
+        try:
+            self.sio.emit('register', registration_data)
+            print(f"👤 [{self.username}] Зарегистрирован в подсети {current_subnet}")
+            return True
+        except Exception as e:
+            print(f"❌ [{self.username}] Ошибка регистрации: {e}")
+            return False
 
     def process_received_message(self, data):
         """Обработка полученного сообщения"""
@@ -496,7 +525,7 @@ def connect():
             'subnet_hash': network_info['subnet_hash']
         })
     else:
-        return jsonify({'status': 'error', 'message': 'Ошибка подключения'})
+        return jsonify({'status': 'error', 'message': 'Не удалось подключиться к серверу. Проверьте URL сервера.'})
 
 
 @app.route('/disconnect', methods=['POST'])
@@ -651,6 +680,7 @@ def start_web_client(host='0.0.0.0', port=5001):
     print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
     print(f"📡 Сервер по умолчанию: https://cryptotg.onrender.com")
     print(f"🔧 Кроссплатформенное определение сети (Windows/macOS/Linux)")
+    print(f"💡 Убедитесь, что сервер доступен по указанному URL")
     app.run(host=host, port=port, debug=False)
 
 
