@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secure Web Chat</title>
     <style>
-        /* Стили остаются без изменений */
         :root {
             --primary-color: #007bff;
             --primary-dark: #0056b3;
@@ -15,6 +14,7 @@
             --danger-dark: #c82333;
             --warning-color: #ffc107;
             --warning-dark: #e0a800;
+            --info-color: #17a2b8;
             --dark-color: #343a40;
             --light-color: #f8f9fa;
             --gray-color: #6c757d;
@@ -173,6 +173,14 @@
             background: var(--warning-dark);
         }
 
+        button.info {
+            background: var(--info-color);
+        }
+
+        button.info:hover {
+            background: #138496;
+        }
+
         button:disabled {
             background: var(--gray-color);
             cursor: not-allowed;
@@ -246,6 +254,11 @@
             background: #fffaf0;
         }
 
+        .message.encrypted-undecrypted {
+            border-left-color: var(--danger-color);
+            background: #ffe6e6;
+        }
+
         .message.sent {
             border-left-color: var(--success-color);
             background: #f0fff4;
@@ -309,6 +322,21 @@
             border-radius: 10px;
             font-size: 10px;
             font-weight: bold;
+        }
+
+        .decrypt-btn {
+            margin-top: 8px;
+            padding: 4px 8px;
+            font-size: 11px;
+            background: var(--warning-color);
+            color: var(--dark-color);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .decrypt-btn:hover {
+            background: var(--warning-dark);
         }
 
         .input-area {
@@ -552,6 +580,83 @@
             font-style: italic;
         }
 
+        .subnet-controls {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--warning-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .subnet-input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .subnet-input {
+            flex: 1;
+            font-size: 13px;
+            padding: 8px 12px;
+        }
+
+        .subnet-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .subnet-status {
+            font-size: 12px;
+            color: var(--gray-color);
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .manual-indicator {
+            background: var(--warning-color);
+            color: var(--dark-color);
+            padding: 2px 6px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
+        .encryption-controls {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--info-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .key-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .key-input {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        .toggle-key-btn {
+            background: transparent;
+            border: 1px solid var(--info-color);
+            color: var(--info-color);
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        .toggle-key-btn:hover {
+            background: var(--info-color);
+            color: white;
+        }
+
         /* Responsive design */
         @media (max-width: 768px) {
             .chat-area {
@@ -642,51 +747,6 @@
         .new-session-btn:hover {
             background: var(--warning-dark);
         }
-
-        /* Новые стили для управления подсетью */
-        .subnet-controls {
-            background: white;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-left: 4px solid var(--warning-color);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-
-        .subnet-input-group {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 8px;
-        }
-
-        .subnet-input {
-            flex: 1;
-            font-size: 13px;
-            padding: 8px 12px;
-        }
-
-        .subnet-buttons {
-            display: flex;
-            gap: 5px;
-        }
-
-        .subnet-status {
-            font-size: 12px;
-            color: var(--gray-color);
-            margin-top: 5px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .manual-indicator {
-            background: var(--warning-color);
-            color: var(--dark-color);
-            padding: 2px 6px;
-            border-radius: 8px;
-            font-size: 10px;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -762,22 +822,40 @@
                 </div>
 
                 <div class="settings-group">
-                    <h4>🔐 Настройки шифрования</h4>
+                    <h4>🔐 Управление шифрованием</h4>
+                    <div class="encryption-controls">
+                        <div class="input-group">
+                            <label>Шифрование:</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="encryptionToggle" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
 
-                    <div class="input-group">
-                        <label>Шифрование:</label>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="encryptionToggle" checked>
-                            <span class="slider"></span>
-                        </label>
+                        <div class="input-group">
+                            <label>Авто-дешифровка:</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="autoDecryptToggle" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Показать ключ:</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="showKeyToggle">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="key-input-group">
+                            <input type="password" id="encryptionKey" class="key-input"
+                                   value="secret123" placeholder="Ключ шифрования">
+                            <button type="button" id="toggleKeyVisibility" class="toggle-key-btn">👁️</button>
+                        </div>
+
+                        <button id="updateSettingsBtn" class="info">🔄 Обновить настройки</button>
                     </div>
-
-                    <div class="input-group">
-                        <label for="encryptionKey">Ключ:</label>
-                        <input type="password" id="encryptionKey" value="secret123" placeholder="Ключ шифрования">
-                    </div>
-
-                    <button id="updateSettingsBtn" class="warning">🔄 Обновить настройки</button>
                 </div>
 
                 <div class="settings-group">
@@ -787,9 +865,11 @@
                         <p>Локальный IP: <span id="networkStatus">Не подключено</span></p>
                         <p>Пользователей онлайн: <span id="onlineUsers">0</span></p>
                         <p>Шифрование: <span id="encryptionStatus">ВКЛ</span></p>
+                        <p>Авто-дешифровка: <span id="autoDecryptStatus">ВКЛ</span></p>
                         <p>Сессия: <span id="sessionStatus">Не активна</span></p>
                     </div>
                 </div>
+
                 <div class="settings-group">
                     <h4>🌐 Информация о сети</h4>
                     <div class="network-info" id="networkInfo">
@@ -844,6 +924,8 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const connectionAlert = document.getElementById('connectionAlert');
         const encryptionToggle = document.getElementById('encryptionToggle');
+        const autoDecryptToggle = document.getElementById('autoDecryptToggle');
+        const showKeyToggle = document.getElementById('showKeyToggle');
         const updateSettingsBtn = document.getElementById('updateSettingsBtn');
         const refreshNetworkBtn = document.getElementById('refreshNetworkBtn');
         const recipientSelect = document.getElementById('recipientSelect');
@@ -852,8 +934,9 @@
         const serverUrlInput = document.getElementById('serverUrl');
         const usernameInput = document.getElementById('username');
         const sessionIdElement = document.getElementById('sessionId');
+        const toggleKeyVisibilityBtn = document.getElementById('toggleKeyVisibility');
 
-        // Новые элементы для управления подсетью
+        // Элементы управления подсетью
         const manualSubnetInput = document.getElementById('manualSubnet');
         const setSubnetBtn = document.getElementById('setSubnetBtn');
         const autoSubnetBtn = document.getElementById('autoSubnetBtn');
@@ -872,13 +955,11 @@
             const username = localStorage.getItem('chat_username');
             const sessionTime = localStorage.getItem('chat_session_time');
 
-            // Проверяем, что сессия не старше 24 часов
             if (sessionId && sessionTime) {
                 const sessionAge = Date.now() - parseInt(sessionTime);
-                if (sessionAge < 24 * 60 * 60 * 1000) { // 24 часа
+                if (sessionAge < 24 * 60 * 60 * 1000) {
                     return { sessionId, username };
                 } else {
-                    // Удаляем просроченную сессию
                     clearSessionStorage();
                 }
             }
@@ -920,7 +1001,6 @@
                 return;
             }
 
-            // Базовая валидация формата CIDR
             const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
             if (!cidrRegex.test(subnet)) {
                 showAlert('Неверный формат подсети. Используйте: 192.168.0.0/24', 'error');
@@ -944,8 +1024,6 @@
                     subnetMode.style.color = 'var(--warning-color)';
                     manualIndicator.style.display = 'inline';
                     showAlert(`✅ Подсеть установлена: ${subnet}`);
-
-                    // Обновляем информацию о сети
                     loadNetworkUsers();
                 } else {
                     showAlert(data.message, 'error');
@@ -978,14 +1056,51 @@
                     manualIndicator.style.display = 'none';
                     manualSubnetInput.value = '';
                     showAlert('✅ Автоопределение подсети включено');
-
-                    // Обновляем информацию о сети
                     loadNetworkUsers();
                 } else {
                     showAlert(data.message, 'error');
                 }
             } catch (error) {
                 showAlert('Ошибка переключения на автоопределение: ' + error.message, 'error');
+            }
+        }
+
+        // Функции управления шифрованием
+        function toggleKeyVisibility() {
+            const keyInput = document.getElementById('encryptionKey');
+            if (keyInput.type === 'password') {
+                keyInput.type = 'text';
+                toggleKeyVisibilityBtn.textContent = '🙈';
+            } else {
+                keyInput.type = 'password';
+                toggleKeyVisibilityBtn.textContent = '👁️';
+            }
+        }
+
+        async function decryptMessageManually(messageIndex) {
+            const key = prompt('Введите ключ для дешифровки:');
+            if (!key) return;
+
+            try {
+                const response = await fetch('/decrypt', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        message_index: messageIndex,
+                        key: key
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    showAlert('✅ Сообщение расшифровано');
+                    loadMessages();
+                } else {
+                    showAlert('❌ ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Ошибка дешифровки: ' + error.message, 'error');
             }
         }
 
@@ -1036,11 +1151,18 @@
             const messageDiv = document.createElement('div');
             const isYou = messageData.username === currentUsername;
             const isPrivate = messageData.is_private;
-            const isSystem = messageData.is_system;
+            const isSystem = messageData.type === 'system';
+            const needsDecryption = messageData.needs_decryption;
 
             let messageClass = 'message';
             if (isSystem) messageClass += ' system';
-            if (messageData.encrypted) messageClass += ' encrypted';
+            if (messageData.encrypted) {
+                if (needsDecryption) {
+                    messageClass += ' encrypted-undecrypted';
+                } else {
+                    messageClass += ' encrypted';
+                }
+            }
             if (isYou) messageClass += ' sent';
             if (isPrivate) messageClass += ' private';
 
@@ -1049,6 +1171,11 @@
             let privateBadge = '';
             if (isPrivate && !isSystem) {
                 privateBadge = '<div class="private-badge">🔒 Приватное</div>';
+            }
+
+            let decryptButton = '';
+            if (needsDecryption) {
+                decryptButton = `<button class="decrypt-btn" onclick="decryptMessageManually(${messageCount})">🔓 Расшифровать вручную</button>`;
             }
 
             let usernameDisplay = isSystem ? 'Система' : messageData.username;
@@ -1066,6 +1193,7 @@
                 <div class="message-content">
                     ${messageData.message}
                 </div>
+                ${decryptButton}
             `;
 
             messagesContainer.appendChild(messageDiv);
@@ -1092,7 +1220,6 @@
                 document.getElementById('networkStatus').style.color = 'var(--danger-color)';
             }
 
-            // Обновляем статус ручной подсети
             if (networkInfo.is_manual_subnet) {
                 isManualSubnet = true;
                 subnetMode.textContent = `Ручная: ${networkInfo.subnet}`;
@@ -1175,7 +1302,6 @@
                 currentSessionId = data.session_id;
                 currentUsername = data.username;
 
-                // Сохраняем в localStorage
                 saveSessionToStorage(currentSessionId, currentUsername);
                 updateSessionDisplay(currentSessionId, currentUsername);
 
@@ -1231,14 +1357,12 @@
                 const data = await response.json();
 
                 if (data.status === 'connected') {
-                    // Обновляем имя пользователя в хранилище
                     saveSessionToStorage(currentSessionId, username);
-
                     updateConnectionStatus('connected');
                     showAlert(`✅ Успешное подключение к локальной сети: ${data.subnet}`);
 
                     addMessageToChat({
-                        is_system: true,
+                        type: 'system',
                         message: `Вы подключились к чату как ${username}`
                     });
 
@@ -1272,7 +1396,7 @@
                 showAlert('Отключено от сервера');
 
                 addMessageToChat({
-                    is_system: true,
+                    type: 'system',
                     message: 'Вы отключились от чата'
                 });
 
@@ -1386,6 +1510,8 @@
             }
 
             const encryptionEnabled = encryptionToggle.checked;
+            const autoDecrypt = autoDecryptToggle.checked;
+            const showKey = showKeyToggle.checked;
             const encryptionKey = document.getElementById('encryptionKey').value;
             const username = usernameInput.value.trim();
 
@@ -1401,6 +1527,8 @@
                     body: JSON.stringify({
                         session_id: currentSessionId,
                         encryption_enabled: encryptionEnabled,
+                        auto_decrypt: autoDecrypt,
+                        show_encryption_key: showKey,
                         encryption_key: encryptionKey,
                         username: username
                     })
@@ -1409,10 +1537,13 @@
                 const data = await response.json();
 
                 if (data.status === 'success') {
+                    // Обновляем статусы на основе ответа сервера
                     document.getElementById('encryptionStatus').textContent =
-                        encryptionEnabled ? 'ВКЛ' : 'ВЫКЛ';
+                        data.current_settings.encryption_enabled ? 'ВКЛ' : 'ВЫКЛ';
+                    document.getElementById('autoDecryptStatus').textContent =
+                        data.current_settings.auto_decrypt ? 'ВКЛ' : 'ВЫКЛ';
+
                     currentUsername = username;
-                    // Обновляем имя в хранилище
                     saveSessionToStorage(currentSessionId, username);
                     showAlert('Настройки обновлены');
                 } else {
@@ -1431,15 +1562,28 @@
                 const status = await response.json();
 
                 updateConnectionStatus(status.connected ? 'connected' : 'disconnected');
+
+                // Обновляем только текстовые статусы, но не переключатели
                 document.getElementById('encryptionStatus').textContent =
                     status.encryption_enabled ? 'ВКЛ' : 'ВЫКЛ';
+                document.getElementById('autoDecryptStatus').textContent =
+                    status.auto_decrypt ? 'ВКЛ' : 'ВЫКЛ';
 
-                encryptionToggle.checked = status.encryption_enabled;
+                // НЕ обновляем состояние переключателей из статуса
+                // чтобы пользовательские настройки не перезаписывались
+
+                if (status.show_encryption_key) {
+                    // Только если нужно показать ключ - обновляем видимость
+                    const keyInput = document.getElementById('encryptionKey');
+                    if (keyInput.type === 'password') {
+                        keyInput.type = 'text';
+                        toggleKeyVisibilityBtn.textContent = '🙈';
+                    }
+                }
 
                 if (status.username && status.username !== currentUsername) {
                     usernameInput.value = status.username;
                     currentUsername = status.username;
-                    // Обновляем имя в хранилище
                     saveSessionToStorage(currentSessionId, status.username);
                 }
 
@@ -1469,10 +1613,28 @@
         updateSettingsBtn.addEventListener('click', updateSettings);
         refreshNetworkBtn.addEventListener('click', loadNetworkUsers);
         recipientSelect.addEventListener('change', updateMessageTypeDisplay);
+        toggleKeyVisibilityBtn.addEventListener('click', toggleKeyVisibility);
 
-        // Новые обработчики для управления подсетью
+        // Обработчики для управления подсетью
         setSubnetBtn.addEventListener('click', setManualSubnet);
         autoSubnetBtn.addEventListener('click', setAutoSubnet);
+
+        // Обработчики для переключателей шифрования
+        encryptionToggle.addEventListener('change', function() {
+            document.getElementById('encryptionStatus').textContent =
+                this.checked ? 'ВКЛ' : 'ВЫКЛ';
+        });
+
+        autoDecryptToggle.addEventListener('change', function() {
+            document.getElementById('autoDecryptStatus').textContent =
+                this.checked ? 'ВКЛ' : 'ВЫКЛ';
+        });
+
+        showKeyToggle.addEventListener('change', function() {
+            if (this.checked) {
+                toggleKeyVisibility();
+            }
+        });
 
         // Обработчик Enter для поля подсети
         manualSubnetInput.addEventListener('keydown', function(e) {
@@ -1517,7 +1679,7 @@
                 currentUsername = savedSession.username || '';
                 updateSessionDisplay(currentSessionId, currentUsername);
                 showAlert('✅ Загружена сохраненная сессия');
-                updateStatus(); // Проверяем статус подключения
+                updateStatus();
             } else {
                 showAlert('Создайте новую сессию для начала работы');
             }
