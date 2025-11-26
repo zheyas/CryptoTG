@@ -13,10 +13,6 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
-# Добавляем необходимые импорты
-import netifaces
-import platform
-
 app = Flask(__name__, template_folder='.')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_urlsafe(32))
 
@@ -30,55 +26,33 @@ class NetworkManager:
         self.subnet_hash = None
 
     def get_local_ip_and_subnet(self):
-        """Получение локального IP и реальной подсети с маской"""
+        """Кроссплатформенное получение локального IP и подсети"""
         try:
-            if platform.system() == "Darwin":  # macOS
-                interfaces = netifaces.interfaces()
-                # Приоритет для Ethernet и WiFi интерфейсов
-                for interface in ['en0', 'en1', 'en2', 'wl0', 'wl1']:
-                    if interface in interfaces:
-                        addrs = netifaces.ifaddresses(interface)
-                        if netifaces.AF_INET in addrs:
-                            for addr_info in addrs[netifaces.AF_INET]:
-                                ip = addr_info['addr']
-                                netmask = addr_info.get('netmask', '255.255.255.0')
-                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
-                                    return ip, netmask
-
-                # Если предпочтительные не найдены, ищем любой рабочий интерфейс
-                for interface in interfaces:
-                    if interface.startswith('en') or interface.startswith('wl'):
-                        addrs = netifaces.ifaddresses(interface)
-                        if netifaces.AF_INET in addrs:
-                            for addr_info in addrs[netifaces.AF_INET]:
-                                ip = addr_info['addr']
-                                netmask = addr_info.get('netmask', '255.255.255.0')
-                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
-                                    return ip, netmask
-            else:
-                # Windows/Linux
-                interfaces = netifaces.interfaces()
-                for interface in interfaces:
-                    # Игнорируем loopback и виртуальные интерфейсы
-                    if (interface.startswith('eth') or
-                            interface.startswith('wlan') or
-                            interface.startswith('en') or
-                            interface.startswith('wl')):
-                        addrs = netifaces.ifaddresses(interface)
-                        if netifaces.AF_INET in addrs:
-                            for addr_info in addrs[netifaces.AF_INET]:
-                                ip = addr_info['addr']
-                                netmask = addr_info.get('netmask', '255.255.255.0')
-                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
-                                    return ip, netmask
-
-            # Fallback метод
+            # Сначала пробуем стандартный метод через socket (работает везде)
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-            return local_ip, "255.255.255.0"
+            try:
+                # Этот метод работает на Windows, macOS и Linux
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+
+                # Для домашних сетей используем стандартные маски
+                if local_ip.startswith('192.168.'):
+                    return local_ip, "255.255.255.0"
+                elif local_ip.startswith('10.'):
+                    return local_ip, "255.255.0.0"
+                elif local_ip.startswith('172.'):
+                    ip_parts = list(map(int, local_ip.split('.')))
+                    if 16 <= ip_parts[1] <= 31:
+                        return local_ip, "255.255.0.0"
+                else:
+                    # Для остальных случаев используем /24
+                    return local_ip, "255.255.255.0"
+
+            except:
+                s.close()
+                return "127.0.0.1", "255.255.255.0"
 
         except Exception as e:
             print(f"⚠️ Ошибка определения сети: {e}")
@@ -256,7 +230,11 @@ class UserChatClient:
         for attempt in range(max_retries):
             try:
                 print(f"🔗 [{self.username}] Попытка подключения {attempt + 1} к {self.server_url}...")
-                self.sio.connect(self.server_url)
+                self.sio.connect(
+                    self.server_url,
+                    transports=['websocket', 'polling'],
+                    wait_timeout=10
+                )
                 return True
             except Exception as e:
                 print(f"❌ [{self.username}] Ошибка подключения: {e}")
@@ -672,7 +650,7 @@ def start_web_client(host='0.0.0.0', port=5001):
     print(f"🌐 Многопользовательский веб-клиент запущен на http://{host}:{port}")
     print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
     print(f"📡 Сервер по умолчанию: https://cryptotg.onrender.com")
-    print(f"🔧 Улучшенное определение подсетей с поддержкой netifaces")
+    print(f"🔧 Кроссплатформенное определение сети (Windows/macOS/Linux)")
     app.run(host=host, port=port, debug=False)
 
 
