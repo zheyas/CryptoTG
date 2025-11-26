@@ -13,6 +13,10 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
+# Добавляем необходимые импорты
+import netifaces
+import platform
+
 app = Flask(__name__, template_folder='.')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_urlsafe(32))
 
@@ -25,26 +29,91 @@ class NetworkManager:
         self.current_subnet = None
         self.subnet_hash = None
 
-    def get_local_ip(self):
-        """Получение локального IP адреса"""
+    def get_local_ip_and_subnet(self):
+        """Получение локального IP и реальной подсети с маской"""
         try:
+            if platform.system() == "Darwin":  # macOS
+                interfaces = netifaces.interfaces()
+                # Приоритет для Ethernet и WiFi интерфейсов
+                for interface in ['en0', 'en1', 'en2', 'wl0', 'wl1']:
+                    if interface in interfaces:
+                        addrs = netifaces.ifaddresses(interface)
+                        if netifaces.AF_INET in addrs:
+                            for addr_info in addrs[netifaces.AF_INET]:
+                                ip = addr_info['addr']
+                                netmask = addr_info.get('netmask', '255.255.255.0')
+                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
+                                    return ip, netmask
+
+                # Если предпочтительные не найдены, ищем любой рабочий интерфейс
+                for interface in interfaces:
+                    if interface.startswith('en') or interface.startswith('wl'):
+                        addrs = netifaces.ifaddresses(interface)
+                        if netifaces.AF_INET in addrs:
+                            for addr_info in addrs[netifaces.AF_INET]:
+                                ip = addr_info['addr']
+                                netmask = addr_info.get('netmask', '255.255.255.0')
+                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
+                                    return ip, netmask
+            else:
+                # Windows/Linux
+                interfaces = netifaces.interfaces()
+                for interface in interfaces:
+                    # Игнорируем loopback и виртуальные интерфейсы
+                    if (interface.startswith('eth') or
+                            interface.startswith('wlan') or
+                            interface.startswith('en') or
+                            interface.startswith('wl')):
+                        addrs = netifaces.ifaddresses(interface)
+                        if netifaces.AF_INET in addrs:
+                            for addr_info in addrs[netifaces.AF_INET]:
+                                ip = addr_info['addr']
+                                netmask = addr_info.get('netmask', '255.255.255.0')
+                                if ip != '127.0.0.1' and not ip.startswith('169.254'):
+                                    return ip, netmask
+
+            # Fallback метод
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
-            return local_ip
-        except:
-            return "127.0.0.1"
+            return local_ip, "255.255.255.0"
+
+        except Exception as e:
+            print(f"⚠️ Ошибка определения сети: {e}")
+            return "127.0.0.1", "255.255.255.0"
+
+    def calculate_cidr(self, ip, netmask):
+        """Вычисление CIDR из IP и маски"""
+        try:
+            # Конвертируем маску в префикс CIDR
+            netmask_parts = list(map(int, netmask.split('.')))
+            cidr = sum(bin(part).count('1') for part in netmask_parts)
+
+            # Вычисляем сетевой адрес
+            ip_parts = list(map(int, ip.split('.')))
+            network_parts = [ip_parts[i] & netmask_parts[i] for i in range(4)]
+            network_ip = '.'.join(map(str, network_parts))
+
+            return f"{network_ip}/{cidr}"
+        except Exception as e:
+            print(f"⚠️ Ошибка вычисления CIDR: {e}")
+            # Fallback для типичных домашних сетей
+            if ip.startswith('192.168.'):
+                return "192.168.0.0/24"
+            elif ip.startswith('10.'):
+                return "10.0.0.0/8"
+            else:
+                return "192.168.0.0/24"
 
     def get_ip_subnet(self):
-        """Получение подсети IP адреса"""
-        local_ip = self.get_local_ip()
-        ip_parts = local_ip.split('.')
-        if len(ip_parts) == 4:
-            subnet = f"{ip_parts[0]}.{ip_parts[1]}.{ip_parts[2]}.0/24"
-            return subnet
-        return "unknown_subnet"
+        """Получение подсети в формате CIDR"""
+        ip, netmask = self.get_local_ip_and_subnet()
+        cidr_subnet = self.calculate_cidr(ip, netmask)
+
+        print(f"🌐 Определена подсеть: {cidr_subnet} (IP: {ip}, маска: {netmask})")
+        return cidr_subnet
 
     def get_subnet_hash(self, subnet):
         """Получение хэша подсети"""
@@ -124,12 +193,12 @@ class UserChatClient:
         self.client_id = None
         self.subnet_hash = None
         self.local_ip = None
+        self.current_subnet = None
         self.messages = []
+        self.manual_subnet = None  # Для ручной настройки подсети
 
         # Инициализация информации о сети
-        self.local_ip = self.network_manager.get_local_ip()
-        self.current_subnet = self.network_manager.get_ip_subnet()
-        self.subnet_hash = self.network_manager.get_subnet_hash(self.current_subnet)
+        self.update_network_info()
 
         # Настройка обработчиков событий WebSocket
         self.setup_event_handlers()
@@ -206,20 +275,40 @@ class UserChatClient:
         self.connected = False
         print(f"🔌 [{self.username}] Отключено от сервера")
 
+    def set_manual_subnet(self, subnet):
+        """Ручная установка подсети"""
+        if subnet and '/' in subnet:  # Проверяем формат CIDR
+            self.manual_subnet = subnet
+            self.subnet_hash = self.network_manager.get_subnet_hash(subnet)
+            print(f"🔧 [{self.username}] Установлена ручная подсеть: {subnet}")
+            return True
+        else:
+            print(f"❌ [{self.username}] Неверный формат подсети: {subnet}")
+            return False
+
+    def get_current_subnet(self):
+        """Получение текущей подсети (авто или ручная)"""
+        if self.manual_subnet:
+            return self.manual_subnet
+        return self.current_subnet
+
     def register_client(self):
         """Регистрация клиента на сервере"""
         if not self.connected:
             return False
 
+        # Используем текущую подсеть (авто или ручную)
+        current_subnet = self.get_current_subnet()
+
         registration_data = {
-            'subnet': self.current_subnet,
+            'subnet': current_subnet,
             'username': self.username,
             'local_ip': self.local_ip,
             'client_id': f"client_{self.session_id}_{datetime.now().timestamp()}"
         }
 
         self.sio.emit('register', registration_data)
-        print(f"👤 [{self.username}] Зарегистрирован в подсети {self.current_subnet}")
+        print(f"👤 [{self.username}] Зарегистрирован в подсети {current_subnet}")
         return True
 
     def process_received_message(self, data):
@@ -312,12 +401,19 @@ class UserChatClient:
 
     def update_network_info(self):
         """Обновление информации о сети"""
-        self.local_ip = self.network_manager.get_local_ip()
-        self.current_subnet = self.network_manager.get_ip_subnet()
-        self.subnet_hash = self.network_manager.get_subnet_hash(self.current_subnet)
+        ip_info = self.network_manager.get_local_ip_and_subnet()
+        if isinstance(ip_info, tuple):
+            self.local_ip = ip_info[0]
+            self.current_subnet = self.network_manager.get_ip_subnet()
+        else:
+            self.local_ip = ip_info
+            self.current_subnet = self.network_manager.get_ip_subnet()
+
+        self.subnet_hash = self.network_manager.get_subnet_hash(self.get_current_subnet())
+
         return {
             'local_ip': self.local_ip,
-            'subnet': self.current_subnet,
+            'subnet': self.get_current_subnet(),
             'subnet_hash': self.subnet_hash
         }
 
@@ -478,10 +574,11 @@ def get_network_users():
         client = client_sessions[session_id]
         return jsonify({
             'local_ip': client.local_ip,
-            'subnet': client.current_subnet,
+            'subnet': client.get_current_subnet(),
             'subnet_hash': client.subnet_hash,
             'users': client.network_users,
-            'total_users': len(client.network_users)
+            'total_users': len(client.network_users),
+            'is_manual_subnet': client.manual_subnet is not None
         })
     else:
         return jsonify({'users': [], 'total_users': 0})
@@ -501,6 +598,53 @@ def update_settings():
         return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
 
 
+@app.route('/settings/subnet', methods=['POST'])
+def set_manual_subnet():
+    """Ручная настройка подсети"""
+    data = request.json
+    session_id = data.get('session_id')
+    subnet = data.get('subnet')
+
+    if session_id and session_id in client_sessions:
+        client = client_sessions[session_id]
+
+        # Валидация формата CIDR
+        try:
+            if subnet and '/' in subnet:
+                ip_part, mask_part = subnet.split('/')
+                mask = int(mask_part)
+                if 0 <= mask <= 32:
+                    # Форсируем использование ручной подсети
+                    success = client.set_manual_subnet(subnet)
+                    if success:
+                        return jsonify({
+                            'status': 'success',
+                            'message': 'Подсеть установлена',
+                            'subnet': subnet
+                        })
+        except:
+            pass
+
+        return jsonify({'status': 'error', 'message': 'Неверный формат подсети (используйте: X.X.X.X/XX)'})
+    else:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
+
+
+@app.route('/settings/subnet/auto', methods=['POST'])
+def set_auto_subnet():
+    """Возврат к автоматическому определению подсети"""
+    data = request.json
+    session_id = data.get('session_id')
+
+    if session_id and session_id in client_sessions:
+        client = client_sessions[session_id]
+        client.manual_subnet = None
+        client.update_network_info()
+        return jsonify({'status': 'success', 'message': 'Автоопределение подсети включено'})
+    else:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
+
+
 @app.route('/status')
 def get_status():
     """Получение статуса подключения"""
@@ -513,10 +657,11 @@ def get_status():
             'encryption_enabled': client.encryption_enabled,
             'server_url': client.server_url,
             'local_ip': client.local_ip,
-            'subnet': client.current_subnet,
+            'subnet': client.get_current_subnet(),
             'subnet_hash': client.subnet_hash,
             'network_users_count': len(client.network_users),
-            'client_id': client.client_id
+            'client_id': client.client_id,
+            'is_manual_subnet': client.manual_subnet is not None
         })
     else:
         return jsonify({'connected': False, 'username': ''})
@@ -527,6 +672,7 @@ def start_web_client(host='0.0.0.0', port=5001):
     print(f"🌐 Многопользовательский веб-клиент запущен на http://{host}:{port}")
     print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
     print(f"📡 Сервер по умолчанию: https://cryptotg.onrender.com")
+    print(f"🔧 Улучшенное определение подсетей с поддержкой netifaces")
     app.run(host=host, port=port, debug=False)
 
 
