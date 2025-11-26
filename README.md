@@ -63,7 +63,7 @@ pip install -r requirements.txt
 
 3. Запустите клиентское приложение:
 ```bash
-python client.py
+python client/client.py
 ```
 
 4. Откройте браузер и перейдите по адресу:
