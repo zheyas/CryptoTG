@@ -31,12 +31,10 @@ class NetworkManager:
             import socket
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
-                # Этот метод работает на Windows, macOS и Linux
                 s.connect(("8.8.8.8", 80))
                 local_ip = s.getsockname()[0]
                 s.close()
 
-                # Для домашних сетей используем стандартные маски
                 if local_ip.startswith('192.168.'):
                     return local_ip, "255.255.255.0"
                 elif local_ip.startswith('10.'):
@@ -46,7 +44,6 @@ class NetworkManager:
                     if 16 <= ip_parts[1] <= 31:
                         return local_ip, "255.255.0.0"
                 else:
-                    # Для остальных случаев используем /24
                     return local_ip, "255.255.255.0"
 
             except:
@@ -60,11 +57,9 @@ class NetworkManager:
     def calculate_cidr(self, ip, netmask):
         """Вычисление CIDR из IP и маски"""
         try:
-            # Конвертируем маску в префикс CIDR
             netmask_parts = list(map(int, netmask.split('.')))
             cidr = sum(bin(part).count('1') for part in netmask_parts)
 
-            # Вычисляем сетевой адрес
             ip_parts = list(map(int, ip.split('.')))
             network_parts = [ip_parts[i] & netmask_parts[i] for i in range(4)]
             network_ip = '.'.join(map(str, network_parts))
@@ -72,7 +67,6 @@ class NetworkManager:
             return f"{network_ip}/{cidr}"
         except Exception as e:
             print(f"⚠️ Ошибка вычисления CIDR: {e}")
-            # Fallback для типичных домашних сетей
             if ip.startswith('192.168.'):
                 return "192.168.0.0/24"
             elif ip.startswith('10.'):
@@ -84,8 +78,6 @@ class NetworkManager:
         """Получение подсети в формате CIDR"""
         ip, netmask = self.get_local_ip_and_subnet()
         cidr_subnet = self.calculate_cidr(ip, netmask)
-
-        print(f"🌐 Определена подсеть: {cidr_subnet} (IP: {ip}, маска: {netmask})")
         return cidr_subnet
 
     def get_subnet_hash(self, subnet):
@@ -98,7 +90,7 @@ class CryptoManager:
         self.backend = default_backend()
 
     def derive_key(self, password: str, salt: bytes = None) -> tuple:
-        """Производный ключ из пароля произвольной длины"""
+        """Производный ключ из пароля"""
         if salt is None:
             salt = os.urandom(16)
 
@@ -115,6 +107,9 @@ class CryptoManager:
     def encrypt(self, message: str, password: str) -> str:
         """Шифрование сообщения с использованием AES-256-CFB"""
         try:
+            if not message or not password:
+                return message
+
             key, salt = self.derive_key(password)
             iv = os.urandom(16)
 
@@ -133,6 +128,9 @@ class CryptoManager:
     def decrypt(self, encrypted_message: str, password: str) -> str:
         """Дешифрование сообщения"""
         try:
+            if not encrypted_message or not password:
+                return encrypted_message
+
             combined = base64.b64decode(encrypted_message)
             salt = combined[:16]
             iv = combined[16:32]
@@ -148,14 +146,13 @@ class CryptoManager:
 
         except Exception as e:
             print(f"Ошибка дешифрования: {e}")
-            return f"[Не удалось расшифровать]"
+            return f"[Не удалось расшифровать: {encrypted_message[:20]}...]"
 
 
 class UserChatClient:
     def __init__(self, session_id, server_url='https://cryptotg.onrender.com'):
         self.session_id = session_id
         self.server_url = server_url
-        # Упрощенная конфигурация SocketIO
         self.sio = socketio.Client(
             reconnection=True,
             reconnection_attempts=5,
@@ -165,8 +162,13 @@ class UserChatClient:
         )
         self.connected = False
         self.username = f"User_{secrets.token_hex(4)}"
+
+        # Настройки шифрования
         self.encryption_enabled = True
+        self.auto_decrypt = True  # Автоматическая дешифровка вкл/выкл
         self.encryption_key = "secret123"
+        self.show_encryption_key = False  # Показывать ключ в интерфейсе
+
         self.crypto = CryptoManager()
         self.network_manager = NetworkManager()
         self.network_users = []
@@ -179,8 +181,6 @@ class UserChatClient:
 
         # Инициализация информации о сети
         self.update_network_info()
-
-        # Настройка обработчиков событий WebSocket
         self.setup_event_handlers()
 
     def setup_event_handlers(self):
@@ -188,7 +188,7 @@ class UserChatClient:
 
         @self.sio.event
         def connect():
-            print(f"✅ [{self.username}] Успешное подключение к серверу")
+            print(f"✅ [{self.username}] Успешное подключение к сервера")
             self.connected = True
             self.register_client()
 
@@ -203,20 +203,16 @@ class UserChatClient:
 
         @self.sio.event
         def network_info(data):
-            """Обработка информации о сети"""
-            print(f"📡 [{self.username}] Получена информация о сети: {len(data.get('users', []))} пользователей")
             self.subnet_hash = data.get('subnet_hash')
             self.client_id = data.get('your_id')
             self.network_users = data.get('users', [])
 
         @self.sio.event
         def network_message(data):
-            """Обработка входящих сообщений"""
             self.process_received_message(data)
 
         @self.sio.event
         def user_joined(data):
-            """Новый пользователь присоединился"""
             new_user = data.get('user')
             if new_user and new_user not in self.network_users:
                 self.network_users.append(new_user)
@@ -224,14 +220,12 @@ class UserChatClient:
 
         @self.sio.event
         def user_left(data):
-            """Пользователь вышел"""
             left_username = data.get('username')
             self.network_users = [u for u in self.network_users if u.get('username') != left_username]
             print(f"👋 [{self.username}] Пользователь вышел: {left_username}")
 
         @self.sio.event
         def error(data):
-            """Обработка ошибок"""
             print(f"❌ [{self.username}] Ошибка: {data.get('message')}")
 
     def connect_to_server(self):
@@ -240,15 +234,7 @@ class UserChatClient:
         for attempt in range(max_retries):
             try:
                 print(f"🔗 [{self.username}] Попытка подключения {attempt + 1} к {self.server_url}...")
-
-                # Упрощенное подключение без сложных параметров
-                self.sio.connect(
-                    self.server_url,
-                    wait_timeout=10,
-                    wait=False
-                )
-
-                # Даем время на установление соединения
+                self.sio.connect(self.server_url, wait_timeout=10, wait=False)
                 time.sleep(2)
 
                 if self.sio.connected:
@@ -261,7 +247,7 @@ class UserChatClient:
                 print(f"❌ [{self.username}] Ошибка подключения: {error_msg}")
 
                 if attempt < max_retries - 1:
-                    wait_time = 3 * (attempt + 1)  # Уменьшили время ожидания
+                    wait_time = 3 * (attempt + 1)
                     print(f"⏳ [{self.username}] Повторная попытка через {wait_time} секунд...")
                     time.sleep(wait_time)
                 else:
@@ -280,7 +266,7 @@ class UserChatClient:
 
     def set_manual_subnet(self, subnet):
         """Ручная установка подсети"""
-        if subnet and '/' in subnet:  # Проверяем формат CIDR
+        if subnet and '/' in subnet:
             self.manual_subnet = subnet
             self.subnet_hash = self.network_manager.get_subnet_hash(subnet)
             print(f"🔧 [{self.username}] Установлена ручная подсеть: {subnet}")
@@ -300,9 +286,7 @@ class UserChatClient:
         if not self.connected:
             return False
 
-        # Используем текущую подсеть (авто или ручную)
         current_subnet = self.get_current_subnet()
-
         registration_data = {
             'subnet': current_subnet,
             'username': self.username,
@@ -319,40 +303,45 @@ class UserChatClient:
             return False
 
     def process_received_message(self, data):
-        """Обработка полученного сообщения"""
+        """Обработка полученного сообщения с учетом настроек шифрования"""
         message_type = data.get('type')
 
         if message_type == 'message':
-            # Сообщение от другого пользователя
             username = data.get('username', 'Unknown')
             message_text = data.get('message', '')
             is_encrypted = data.get('encrypted', True)
             recipient = data.get('recipient', 'all')
             is_private = recipient != 'all'
 
+            display_message = message_text
+            status = "🔓 открытый текст"
+
             # Обработка шифрования
-            if is_encrypted and self.encryption_enabled:
-                try:
-                    decrypted_message = self.crypto.decrypt(message_text, self.encryption_key)
-                    display_message = decrypted_message
-                    status = "🔒 расшифровано"
-                except Exception:
-                    display_message = message_text
-                    status = "🔒 не удалось расшифровать"
-            else:
-                display_message = message_text
-                status = "🔓 открытый текст"
+            if is_encrypted:
+                if self.auto_decrypt and self.encryption_enabled:
+                    try:
+                        decrypted_message = self.crypto.decrypt(message_text, self.encryption_key)
+                        display_message = decrypted_message
+                        status = "🔒 расшифровано"
+                    except Exception as e:
+                        display_message = f"[Зашифрованное сообщение - требуется ключ]"
+                        status = "🔒 зашифровано (не расшифровано)"
+                else:
+                    display_message = f"[Зашифрованное сообщение] {message_text[:50]}..."
+                    status = "🔒 зашифровано"
 
             # Добавляем сообщение в историю
             message_data = {
                 'username': username,
                 'message': display_message,
+                'original_message': message_text,  # Сохраняем оригинал для ручной дешифровки
                 'encrypted': is_encrypted,
                 'status': status,
                 'timestamp': datetime.now().strftime("%H:%M:%S"),
                 'type': 'received',
                 'is_private': is_private,
-                'recipient': recipient
+                'recipient': recipient,
+                'needs_decryption': is_encrypted and not (self.auto_decrypt and self.encryption_enabled)
             }
 
             self.messages.append(message_data)
@@ -361,7 +350,7 @@ class UserChatClient:
             if len(self.messages) > 100:
                 self.messages.pop(0)
 
-            print(f"📨 [{self.username}] Новое сообщение от {username}: {display_message}")
+            print(f"📨 [{self.username}] Новое сообщение от {username}: {status}")
 
     def send_message(self, message_text, recipient="all"):
         """Отправка сообщения в подсеть через WebSocket"""
@@ -391,12 +380,14 @@ class UserChatClient:
             self.messages.append({
                 'username': self.username,
                 'message': message_text,
+                'original_message': encrypted_message if self.encryption_enabled else message_text,
                 'encrypted': self.encryption_enabled,
                 'status': f'📤 отправлено ({message_type})',
                 'timestamp': datetime.now().strftime("%H:%M:%S"),
                 'type': 'sent',
                 'is_private': recipient != 'all',
-                'recipient': recipient
+                'recipient': recipient,
+                'needs_decryption': False
             })
 
             print(f"📤 [{self.username}] Сообщение отправлено: {message_text}")
@@ -405,6 +396,28 @@ class UserChatClient:
         except Exception as e:
             print(f"❌ [{self.username}] Ошибка отправки: {e}")
             return False
+
+    def decrypt_message_manually(self, message_index, key=None):
+        """Ручная дешифровка сообщения по индексу"""
+        if message_index < 0 or message_index >= len(self.messages):
+            return False, "Неверный индекс сообщения"
+
+        message = self.messages[message_index]
+        if not message.get('encrypted') or not message.get('needs_decryption'):
+            return False, "Сообщение не требует дешифровки"
+
+        decrypt_key = key or self.encryption_key
+        if not decrypt_key:
+            return False, "Ключ шифрования не указан"
+
+        try:
+            decrypted = self.crypto.decrypt(message['original_message'], decrypt_key)
+            message['message'] = decrypted
+            message['status'] = "🔒 расшифровано вручную"
+            message['needs_decryption'] = False
+            return True, "Сообщение успешно расшифровано"
+        except Exception as e:
+            return False, f"Ошибка дешифровки: {str(e)}"
 
     def update_network_info(self):
         """Обновление информации о сети"""
@@ -430,10 +443,14 @@ class UserChatClient:
             self.username = settings['username']
         if 'encryption_enabled' in settings:
             self.encryption_enabled = settings['encryption_enabled']
+        if 'auto_decrypt' in settings:
+            self.auto_decrypt = settings['auto_decrypt']
         if 'encryption_key' in settings:
             self.encryption_key = settings['encryption_key']
         if 'server_url' in settings:
             self.server_url = settings['server_url']
+        if 'show_encryption_key' in settings:
+            self.show_encryption_key = settings['show_encryption_key']
 
 
 # Функции для управления сессиями
@@ -453,7 +470,6 @@ def cleanup_old_sessions():
             to_remove = []
 
             for session_id, client in list(client_sessions.items()):
-                # Удаляем сессии старше 1 часа
                 if not client.connected and current_time - getattr(client, 'last_activity', current_time) > 3600:
                     to_remove.append(session_id)
 
@@ -463,7 +479,7 @@ def cleanup_old_sessions():
                     del client_sessions[session_id]
                     print(f"🧹 Удалена старая сессия: {session_id}")
 
-            time.sleep(300)  # Проверка каждые 5 минут
+            time.sleep(300)
         except Exception as e:
             print(f"Ошибка очистки сессий: {e}")
 
@@ -504,14 +520,12 @@ def connect():
 
     client = get_client_session(session_id)
 
-    # Обновляем настройки
     settings = {
         'server_url': server_url,
         'username': username
     }
     client.update_settings(settings)
 
-    # Обновляем информацию о сети
     network_info = client.update_network_info()
 
     if client.connect_to_server():
@@ -600,9 +614,37 @@ def update_settings():
     if session_id and session_id in client_sessions:
         client = client_sessions[session_id]
         client.update_settings(data)
-        return jsonify({'status': 'success', 'message': 'Настройки обновлены'})
+        return jsonify({
+            'status': 'success',
+            'message': 'Настройки обновлены',
+            'current_settings': {
+                'encryption_enabled': client.encryption_enabled,
+                'auto_decrypt': client.auto_decrypt,
+                'show_encryption_key': client.show_encryption_key
+            }
+        })
     else:
         return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
+
+
+@app.route('/decrypt', methods=['POST'])
+def decrypt_message():
+    """Ручная дешифровка сообщения"""
+    data = request.json
+    session_id = data.get('session_id')
+    message_index = data.get('message_index')
+    key = data.get('key')
+
+    if not session_id or session_id not in client_sessions:
+        return jsonify({'status': 'error', 'message': 'Сессия не найдена'})
+
+    client = client_sessions[session_id]
+    success, message = client.decrypt_message_manually(message_index, key)
+
+    if success:
+        return jsonify({'status': 'success', 'message': message})
+    else:
+        return jsonify({'status': 'error', 'message': message})
 
 
 @app.route('/settings/subnet', methods=['POST'])
@@ -615,13 +657,11 @@ def set_manual_subnet():
     if session_id and session_id in client_sessions:
         client = client_sessions[session_id]
 
-        # Валидация формата CIDR
         try:
             if subnet and '/' in subnet:
                 ip_part, mask_part = subnet.split('/')
                 mask = int(mask_part)
                 if 0 <= mask <= 32:
-                    # Форсируем использование ручной подсети
                     success = client.set_manual_subnet(subnet)
                     if success:
                         return jsonify({
@@ -662,6 +702,8 @@ def get_status():
             'connected': client.connected,
             'username': client.username,
             'encryption_enabled': client.encryption_enabled,
+            'auto_decrypt': client.auto_decrypt,
+            'show_encryption_key': client.show_encryption_key,
             'server_url': client.server_url,
             'local_ip': client.local_ip,
             'subnet': client.get_current_subnet(),
@@ -678,9 +720,11 @@ def start_web_client(host='0.0.0.0', port=5001):
     """Запуск веб-клиента"""
     print(f"🌐 Многопользовательский веб-клиент запущен на http://{host}:{port}")
     print(f"🚀 Для подключения откройте браузер и перейдите по указанному адресу")
-    print(f"📡 Сервер по умолчанию: https://cryptotg.onrender.com")
-    print(f"🔧 Кроссплатформенное определение сети (Windows/macOS/Linux)")
-    print(f"💡 Убедитесь, что сервер доступен по указанному URL")
+    print(f"🔐 Улучшенное управление шифрованием:")
+    print(f"   - Включение/выключение автоматической дешифровки")
+    print(f"   - Ручная дешифровка сообщений")
+    print(f"   - Просмотр ключа шифрования")
+    print(f"   - Подробная информация о статусе сообщений")
     app.run(host=host, port=port, debug=False)
 
 
