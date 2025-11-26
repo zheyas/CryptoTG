@@ -642,6 +642,51 @@
         .new-session-btn:hover {
             background: var(--warning-dark);
         }
+
+        /* Новые стили для управления подсетью */
+        .subnet-controls {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--warning-color);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .subnet-input-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .subnet-input {
+            flex: 1;
+            font-size: 13px;
+            padding: 8px 12px;
+        }
+
+        .subnet-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .subnet-status {
+            font-size: 12px;
+            color: var(--gray-color);
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .manual-indicator {
+            background: var(--warning-color);
+            color: var(--dark-color);
+            padding: 2px 6px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -695,6 +740,24 @@
                     <h4>👥 Пользователи в сети</h4>
                     <div class="users-list" id="usersList">
                         <div class="empty-state">Подключитесь к чату</div>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <h4>🌐 Управление подсетью</h4>
+                    <div class="subnet-controls">
+                        <div class="subnet-input-group">
+                            <input type="text" id="manualSubnet" class="subnet-input"
+                                   placeholder="Ручная подсеть (например: 192.168.0.0/24)">
+                        </div>
+                        <div class="subnet-buttons">
+                            <button id="setSubnetBtn" class="warning">Установить подсеть</button>
+                            <button id="autoSubnetBtn" class="refresh-btn">Авто</button>
+                        </div>
+                        <div class="subnet-status">
+                            <span id="subnetMode">Автоопределение</span>
+                            <span id="manualIndicator" class="manual-indicator" style="display: none;">РУЧНАЯ</span>
+                        </div>
                     </div>
                 </div>
 
@@ -770,6 +833,7 @@
         let isConnecting = false;
         let messageCount = 0;
         let autoRefresh = true;
+        let isManualSubnet = false;
 
         // Элементы интерфейса
         const connectBtn = document.getElementById('connectBtn');
@@ -788,6 +852,13 @@
         const serverUrlInput = document.getElementById('serverUrl');
         const usernameInput = document.getElementById('username');
         const sessionIdElement = document.getElementById('sessionId');
+
+        // Новые элементы для управления подсетью
+        const manualSubnetInput = document.getElementById('manualSubnet');
+        const setSubnetBtn = document.getElementById('setSubnetBtn');
+        const autoSubnetBtn = document.getElementById('autoSubnetBtn');
+        const subnetMode = document.getElementById('subnetMode');
+        const manualIndicator = document.getElementById('manualIndicator');
 
         // Функции для работы с localStorage
         function saveSessionToStorage(sessionId, username) {
@@ -833,6 +904,88 @@
                 sessionIdElement.textContent = 'Не создана';
                 document.getElementById('sessionStatus').textContent = 'Не активна';
                 document.getElementById('sessionStatus').style.color = 'var(--danger-color)';
+            }
+        }
+
+        // Функции управления подсетью
+        async function setManualSubnet() {
+            if (!currentSessionId) {
+                showAlert('Сначала создайте сессию', 'error');
+                return;
+            }
+
+            const subnet = manualSubnetInput.value.trim();
+            if (!subnet) {
+                showAlert('Введите подсеть в формате X.X.X.X/XX', 'error');
+                return;
+            }
+
+            // Базовая валидация формата CIDR
+            const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+            if (!cidrRegex.test(subnet)) {
+                showAlert('Неверный формат подсети. Используйте: 192.168.0.0/24', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/settings/subnet', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        subnet: subnet
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    isManualSubnet = true;
+                    subnetMode.textContent = `Ручная: ${subnet}`;
+                    subnetMode.style.color = 'var(--warning-color)';
+                    manualIndicator.style.display = 'inline';
+                    showAlert(`✅ Подсеть установлена: ${subnet}`);
+
+                    // Обновляем информацию о сети
+                    loadNetworkUsers();
+                } else {
+                    showAlert(data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Ошибка установки подсети: ' + error.message, 'error');
+            }
+        }
+
+        async function setAutoSubnet() {
+            if (!currentSessionId) {
+                showAlert('Сначала создайте сессию', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/settings/subnet/auto', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        session_id: currentSessionId
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    isManualSubnet = false;
+                    subnetMode.textContent = 'Автоопределение';
+                    subnetMode.style.color = 'var(--success-color)';
+                    manualIndicator.style.display = 'none';
+                    manualSubnetInput.value = '';
+                    showAlert('✅ Автоопределение подсети включено');
+
+                    // Обновляем информацию о сети
+                    loadNetworkUsers();
+                } else {
+                    showAlert(data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Ошибка переключения на автоопределение: ' + error.message, 'error');
             }
         }
 
@@ -937,6 +1090,21 @@
             } else {
                 document.getElementById('networkStatus').textContent = 'Не определено';
                 document.getElementById('networkStatus').style.color = 'var(--danger-color)';
+            }
+
+            // Обновляем статус ручной подсети
+            if (networkInfo.is_manual_subnet) {
+                isManualSubnet = true;
+                subnetMode.textContent = `Ручная: ${networkInfo.subnet}`;
+                subnetMode.style.color = 'var(--warning-color)';
+                manualIndicator.style.display = 'inline';
+                manualSubnetInput.value = networkInfo.subnet;
+            } else {
+                isManualSubnet = false;
+                subnetMode.textContent = 'Автоопределение';
+                subnetMode.style.color = 'var(--success-color)';
+                manualIndicator.style.display = 'none';
+                manualSubnetInput.value = '';
             }
         }
 
@@ -1280,7 +1448,8 @@
                         subnet: status.subnet,
                         local_ip: status.local_ip,
                         subnet_hash: status.subnet_hash,
-                        total_users: status.network_users_count
+                        total_users: status.network_users_count,
+                        is_manual_subnet: status.is_manual_subnet
                     });
                     if (!isConnecting) {
                         loadNetworkUsers();
@@ -1300,6 +1469,17 @@
         updateSettingsBtn.addEventListener('click', updateSettings);
         refreshNetworkBtn.addEventListener('click', loadNetworkUsers);
         recipientSelect.addEventListener('change', updateMessageTypeDisplay);
+
+        // Новые обработчики для управления подсетью
+        setSubnetBtn.addEventListener('click', setManualSubnet);
+        autoSubnetBtn.addEventListener('click', setAutoSubnet);
+
+        // Обработчик Enter для поля подсети
+        manualSubnetInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                setManualSubnet();
+            }
+        });
 
         messageText.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
