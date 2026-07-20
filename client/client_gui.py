@@ -50,7 +50,6 @@ class ChatClient:
 
         ttk.Label(crypto_frame, text="Ключ шифрования:").grid(row=0, column=0)
         self.key_entry = ttk.Entry(crypto_frame, width=20, show="*")
-        self.key_entry.insert(0, "secret123")
         self.key_entry.grid(row=0, column=1)
 
         self.encryption_btn = ttk.Button(crypto_frame, text="Шифрование: ВКЛ",

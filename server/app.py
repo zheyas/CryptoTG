@@ -4,14 +4,99 @@ import hashlib
 from datetime import datetime
 import json
 import logging
+import hmac
+import ipaddress
+import os
+import re
+import secrets
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
+allowed_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '*')
+socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='eventlet')
+
+ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN')
+MAX_MESSAGE_LENGTH = int(os.environ.get('MAX_MESSAGE_LENGTH', '4096'))
+MAX_USERNAME_LENGTH = 32
+USERNAME_RE = re.compile(r'^[\w .@-]{2,32}$', re.UNICODE)
+
+
+def clean_text(value, default='', max_length=MAX_MESSAGE_LENGTH):
+    if value is None:
+        value = default
+
+    value = str(value).strip()
+    if not value:
+        value = default
+
+    if len(value) > max_length:
+        raise ValueError(f'Value is too long: max {max_length} characters')
+
+    return value
+
+
+def validate_username(username):
+    username = clean_text(username, 'Anonymous', MAX_USERNAME_LENGTH)
+    if not USERNAME_RE.match(username):
+        raise ValueError('Username must be 2-32 characters: letters, digits, space, dot, @, _ or -')
+    return username
+
+
+def validate_subnet(subnet):
+    subnet = clean_text(subnet, 'unknown', 64)
+    if subnet == 'unknown':
+        return subnet
+
+    try:
+        return str(ipaddress.ip_network(subnet, strict=False))
+    except ValueError as exc:
+        raise ValueError('Subnet must be in CIDR format, for example 192.168.1.0/24') from exc
+
+
+def validate_ip_address(ip_address):
+    ip_address = clean_text(ip_address, request.remote_addr or 'unknown', 45)
+    if ip_address == 'unknown':
+        return ip_address
+
+    try:
+        return str(ipaddress.ip_address(ip_address))
+    except ValueError:
+        return 'unknown'
+
+
+def get_registered_client():
+    client_id = network_manager.socket_to_client.get(request.sid)
+    if not client_id:
+        return None
+    return network_manager.clients.get(client_id)
+
+
+def admin_token_from_request(data=None):
+    data = data or {}
+    return data.get('admin_token') or request.headers.get('X-Admin-Token') or request.args.get('admin_token')
+
+
+def is_admin_authorized(data=None):
+    token = admin_token_from_request(data)
+    return bool(ADMIN_TOKEN and token and hmac.compare_digest(token, ADMIN_TOKEN))
+
+
+def reject_admin(action='admin'):
+    emit('admin_action_result', {
+        'action': action,
+        'result': 'error',
+        'message': 'Admin token required'
+    })
+
+
+def require_admin_http():
+    if is_admin_authorized():
+        return None
+    return jsonify({'status': 'error', 'message': 'Admin token required'}), 403
 
 
 class NetworkManager:
@@ -27,7 +112,7 @@ class NetworkManager:
         if username in self.banned_users:
             return None
 
-        subnet_hash = hashlib.md5(subnet.encode()).hexdigest()
+        subnet_hash = hashlib.sha256(subnet.encode()).hexdigest()
 
         client_info = {
             'id': client_id,
@@ -176,10 +261,15 @@ def handle_disconnect():
 def handle_register(data):
     """Регистрация клиента в подсети"""
     try:
-        subnet = data.get('subnet', 'unknown')
-        username = data.get('username', 'Anonymous')
-        local_ip = data.get('local_ip', request.remote_addr)
-        client_id = data.get('client_id', f"{request.sid}_{datetime.now().timestamp()}")
+        data = data or {}
+        subnet = validate_subnet(data.get('subnet', 'unknown'))
+        username = validate_username(data.get('username', 'Anonymous'))
+        local_ip = validate_ip_address(data.get('local_ip', request.remote_addr))
+        client_id = clean_text(
+            data.get('client_id', f"{request.sid}_{datetime.now().timestamp()}"),
+            f"{request.sid}_{datetime.now().timestamp()}",
+            96
+        )
 
         # Проверяем, не заблокирован ли пользователь
         if username in network_manager.banned_users:
@@ -220,23 +310,29 @@ def handle_register(data):
 
     except Exception as e:
         logger.error(f"Ошибка регистрации: {e}")
-        emit('error', {'message': 'Registration failed'})
+        emit('error', {'message': f'Registration failed: {e}'})
 
 
 @socketio.on('send_message')
 def handle_send_message(data):
     """Обработка отправки сообщения"""
     try:
-        subnet_hash = data.get('subnet_hash')
-        recipient = data.get('recipient', 'all')
-        username = data.get('username', 'Unknown')
-        message_text = data.get('message', '')
+        data = data or {}
+        client = get_registered_client()
+        if not client:
+            emit('error', {'message': 'Client is not registered'})
+            return
+
+        subnet_hash = client['subnet_hash']
+        username = client['username']
+        recipient = clean_text(data.get('recipient', 'all'), 'all', MAX_USERNAME_LENGTH)
+        message_text = clean_text(data.get('message', ''), '', MAX_MESSAGE_LENGTH)
 
         message_data = {
             'type': 'message',
             'username': username,
             'message': message_text,
-            'encrypted': data.get('encrypted', True),
+            'encrypted': bool(data.get('encrypted', True)),
             'recipient': recipient,
             'timestamp': datetime.now().isoformat()
         }
@@ -270,8 +366,13 @@ def handle_send_message(data):
 def handle_admin_message(data):
     """Обработка административного сообщения"""
     try:
-        username = data.get('username', 'ServerAdmin')
-        message = data.get('message', '')
+        data = data or {}
+        if not is_admin_authorized(data):
+            reject_admin('message')
+            return
+
+        username = validate_username(data.get('username', 'ServerAdmin'))
+        message = clean_text(data.get('message', ''), '', MAX_MESSAGE_LENGTH)
         broadcast = data.get('broadcast', False)
 
         if broadcast:
@@ -302,9 +403,13 @@ def handle_admin_message(data):
 
 
 @socketio.on('admin_disconnect_all')
-def handle_admin_disconnect_all():
+def handle_admin_disconnect_all(data=None):
     """Отключение всех клиентов администратором"""
     try:
+        if not is_admin_authorized(data):
+            reject_admin('disconnect_all')
+            return
+
         disconnected_count = 0
         for client_id in list(network_manager.clients.keys()):
             if network_manager.disconnect_user(client_id):
@@ -335,8 +440,13 @@ def handle_admin_disconnect_all():
 def handle_admin_disconnect_user(data):
     """Отключение конкретного пользователя"""
     try:
-        user_id = data.get('user_id')
-        username = data.get('username', 'Unknown')
+        data = data or {}
+        if not is_admin_authorized(data):
+            reject_admin('disconnect_user')
+            return
+
+        user_id = clean_text(data.get('user_id'), '', 96)
+        username = clean_text(data.get('username', 'Unknown'), 'Unknown', MAX_USERNAME_LENGTH)
 
         success = network_manager.disconnect_user(user_id)
 
@@ -368,8 +478,13 @@ def handle_admin_disconnect_user(data):
 def handle_admin_ban_user(data):
     """Блокировка пользователя"""
     try:
-        username = data.get('username')
-        reason = data.get('reason', 'Нарушение правил чата')
+        data = data or {}
+        if not is_admin_authorized(data):
+            reject_admin('ban_user')
+            return
+
+        username = clean_text(data.get('username'), '', MAX_USERNAME_LENGTH)
+        reason = clean_text(data.get('reason', 'Нарушение правил чата'), 'Нарушение правил чата', 256)
 
         if not username:
             emit('admin_action_result', {
@@ -378,6 +493,8 @@ def handle_admin_ban_user(data):
                 'message': 'Username required'
             })
             return
+
+        username = validate_username(username)
 
         disconnected_count = network_manager.ban_user(username, reason)
 
@@ -409,9 +526,14 @@ def handle_admin_ban_user(data):
 def handle_admin_private_message(data):
     """Приватное сообщение от администратора"""
     try:
-        recipient = data.get('recipient')
-        message = data.get('message')
-        admin_name = data.get('from', 'ServerAdmin')
+        data = data or {}
+        if not is_admin_authorized(data):
+            reject_admin('private_message')
+            return
+
+        recipient = clean_text(data.get('recipient'), '', MAX_USERNAME_LENGTH)
+        message = clean_text(data.get('message'), '', MAX_MESSAGE_LENGTH)
+        admin_name = validate_username(data.get('from', 'ServerAdmin'))
 
         if not recipient or not message:
             emit('admin_action_result', {
@@ -471,6 +593,10 @@ def index():
 @app.route('/api/networks')
 def get_networks():
     """Получение информации о подсетях"""
+    auth_error = require_admin_http()
+    if auth_error:
+        return auth_error
+
     networks_info = []
     for subnet_hash, clients in network_manager.ip_subnets.items():
         if clients:
@@ -502,6 +628,10 @@ def get_stats():
 @app.route('/api/users')
 def get_users():
     """Получение списка всех пользователей"""
+    auth_error = require_admin_http()
+    if auth_error:
+        return auth_error
+
     users = network_manager.get_all_users()
     return jsonify({
         'total_users': len(users),

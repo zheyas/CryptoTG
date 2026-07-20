@@ -554,7 +554,7 @@
 
                 <div class="controls">
                     <input type="text" id="username" placeholder="Имя администратора" value="ServerAdmin">
-                    <input type="password" id="encryptionKey" placeholder="Ключ шифрования" value="server123">
+                    <input type="password" id="encryptionKey" placeholder="Ключ шифрования">
                     <label class="toggle-switch">
                         <input type="checkbox" id="encryptionToggle" checked>
                         <span class="slider"></span>
@@ -677,6 +677,37 @@
             totalClients: 0,
             activeConnections: 0
         };
+        let adminToken = sessionStorage.getItem('cryptotg_admin_token') || '';
+
+        function getAdminToken(promptIfMissing = true) {
+            if (!adminToken && promptIfMissing) {
+                const token = prompt('Введите ADMIN_TOKEN сервера');
+                if (token) {
+                    adminToken = token.trim();
+                    sessionStorage.setItem('cryptotg_admin_token', adminToken);
+                }
+            }
+            return adminToken;
+        }
+
+        function adminPayload(payload = {}) {
+            const token = getAdminToken();
+            if (!token) {
+                showAlert('ADMIN_TOKEN не указан', 'error');
+                return null;
+            }
+            return { ...payload, admin_token: token };
+        }
+
+        function fetchAdmin(url, options = {}) {
+            const { promptIfMissing = true, ...fetchOptions } = options;
+            const token = getAdminToken(promptIfMissing);
+            const headers = { ...(fetchOptions.headers || {}) };
+            if (token) {
+                headers['X-Admin-Token'] = token;
+            }
+            return fetch(url, { ...fetchOptions, headers });
+        }
 
         // Инициализация WebSocket соединения
         function initializeWebSocket() {
@@ -741,6 +772,12 @@
                     updateStatistics();
                 });
 
+                socket.on('admin_action_result', (data) => {
+                    if (data.result === 'error') {
+                        showAlert(data.message || 'Административное действие отклонено', 'error');
+                    }
+                });
+
             } catch (error) {
                 console.error('❌ Ошибка инициализации WebSocket:', error);
                 updateWebSocketStatus('error');
@@ -786,7 +823,7 @@
 
         async function loadUsersList() {
             try {
-                const response = await fetch('/api/users');
+                const response = await fetchAdmin('/api/users');
                 const data = await response.json();
                 return data.users || [];
             } catch (error) {
@@ -798,7 +835,11 @@
         function disconnectUser(userId, username) {
             if (confirm(`Вы уверены, что хотите отключить пользователя ${username}?`)) {
                 if (socket && socket.connected) {
-                    socket.emit('admin_disconnect_user', { user_id: userId });
+                    const payload = adminPayload({ user_id: userId, username: username });
+                    if (!payload) {
+                        return;
+                    }
+                    socket.emit('admin_disconnect_user', payload);
                     addSystemMessage(`🔌 Пользователь ${username} отключен администратором`);
                     showAlert(`Пользователь ${username} отключен`);
                     closeModal('userManagementModal');
@@ -821,10 +862,14 @@
             }
 
             if (socket && socket.connected) {
-                socket.emit('admin_ban_user', {
+                const payload = adminPayload({
                     username: username,
                     reason: reason || 'Нарушение правил чата'
                 });
+                if (!payload) {
+                    return;
+                }
+                socket.emit('admin_ban_user', payload);
                 showAlert(`Пользователь ${username} заблокирован`);
                 closeModal('banUserModal');
 
@@ -855,11 +900,15 @@
             }
 
             if (socket && socket.connected) {
-                socket.emit('admin_private_message', {
+                const payload = adminPayload({
                     recipient: recipient,
                     message: message,
                     from: document.getElementById('username').value || 'ServerAdmin'
                 });
+                if (!payload) {
+                    return;
+                }
+                socket.emit('admin_private_message', payload);
 
                 addChatMessage({
                     username: 'ServerAdmin → ' + recipient,
@@ -987,12 +1036,16 @@
 
             try {
                 if (socket && socket.connected) {
-                    socket.emit('admin_message', {
+                    const payload = adminPayload({
                         username: username,
                         message: message,
                         encrypted: encryptionEnabled,
                         broadcast: true
                     });
+                    if (!payload) {
+                        return;
+                    }
+                    socket.emit('admin_message', payload);
                 }
 
                 addChatMessage({
@@ -1014,7 +1067,7 @@
 
         async function loadNetworks() {
             try {
-                const response = await fetch('/api/networks');
+                const response = await fetchAdmin('/api/networks', { promptIfMissing: false });
                 const data = await response.json();
 
                 const networksList = document.getElementById('networksList');
@@ -1105,7 +1158,11 @@
         function disconnectAllClients() {
             if (confirm('Вы уверены, что хотите отключить всех клиентов?')) {
                 if (socket && socket.connected) {
-                    socket.emit('admin_disconnect_all');
+                    const payload = adminPayload();
+                    if (!payload) {
+                        return;
+                    }
+                    socket.emit('admin_disconnect_all', payload);
                 }
                 addSystemMessage('🔌 Все клиенты отключены администратором');
                 showAlert('Все клиенты отключены');

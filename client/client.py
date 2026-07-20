@@ -4,14 +4,17 @@ import threading
 import json
 from datetime import datetime
 import os
-import base64
 import hashlib
 import time
 import secrets
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from crypto_utils import CryptoManager
 
 app = Flask(__name__, template_folder='.')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_urlsafe(32))
@@ -82,71 +85,7 @@ class NetworkManager:
 
     def get_subnet_hash(self, subnet):
         """Получение хэша подсети"""
-        return hashlib.md5(subnet.encode()).hexdigest()
-
-
-class CryptoManager:
-    def __init__(self):
-        self.backend = default_backend()
-
-    def derive_key(self, password: str, salt: bytes = None) -> tuple:
-        """Производный ключ из пароля"""
-        if salt is None:
-            salt = os.urandom(16)
-
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-            backend=self.backend
-        )
-        key = kdf.derive(password.encode('utf-8'))
-        return key, salt
-
-    def encrypt(self, message: str, password: str) -> str:
-        """Шифрование сообщения с использованием AES-256-CFB"""
-        try:
-            if not message or not password:
-                return message
-
-            key, salt = self.derive_key(password)
-            iv = os.urandom(16)
-
-            cipher = Cipher(algorithms.AES(key), modes.CFB(iv), backend=self.backend)
-            encryptor = cipher.encryptor()
-
-            encrypted = encryptor.update(message.encode('utf-8')) + encryptor.finalize()
-
-            combined = salt + iv + encrypted
-            return base64.b64encode(combined).decode('utf-8')
-
-        except Exception as e:
-            print(f"Ошибка шифрования: {e}")
-            return message
-
-    def decrypt(self, encrypted_message: str, password: str) -> str:
-        """Дешифрование сообщения"""
-        try:
-            if not encrypted_message or not password:
-                return encrypted_message
-
-            combined = base64.b64decode(encrypted_message)
-            salt = combined[:16]
-            iv = combined[16:32]
-            encrypted = combined[32:]
-
-            key, _ = self.derive_key(password, salt)
-
-            cipher = Cipher(algorithms.AES(key), modes.CFB(iv), backend=self.backend)
-            decryptor = cipher.decryptor()
-
-            decrypted = decryptor.update(encrypted) + decryptor.finalize()
-            return decrypted.decode('utf-8')
-
-        except Exception as e:
-            print(f"Ошибка дешифрования: {e}")
-            return f"[Не удалось расшифровать: {encrypted_message[:20]}...]"
+        return hashlib.sha256(subnet.encode()).hexdigest()
 
 
 class UserChatClient:
@@ -166,7 +105,7 @@ class UserChatClient:
         # Настройки шифрования
         self.encryption_enabled = True
         self.auto_decrypt = True  # Автоматическая дешифровка вкл/выкл
-        self.encryption_key = "secret123"
+        self.encryption_key = ""
         self.show_encryption_key = False  # Показывать ключ в интерфейсе
 
         self.crypto = CryptoManager()
